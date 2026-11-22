@@ -110,6 +110,9 @@ LauncherSettings::LauncherSettings()
 		Interface.VirtualKeyboard = true;
 		Interface.KeyboardAutoShow = true;
 		Interface.ShowButtonHints = true;
+		// The analog stick is too coarse to line up a shot: a small cone is
+		// turned to the target and the look slows near it.
+		Gamepad.AimAssist = true;
 	}
 	try
 	{
@@ -180,7 +183,13 @@ LauncherSettings::LauncherSettings()
 		ReadFloat(pad, "Gamepad", "LookSensitivityY", Gamepad.LookSensitivityY);
 		ReadBool(pad, "Gamepad", "InvertY", Gamepad.InvertY);
 		ReadFloat(pad, "Gamepad", "CursorSpeed", Gamepad.CursorSpeed);
+		ReadBool(pad, "Gamepad", "AimAssist", Gamepad.AimAssist);
+		ReadFloat(pad, "Gamepad", "AimAssistCone", Gamepad.AimAssistCone);
+		ReadFloat(pad, "Gamepad", "AimAssistSlowdown", Gamepad.AimAssistSlowdown);
+		ReadBool(pad, "Gamepad", "LogAim", Gamepad.LogAim);
 		ReadBool(pad, "Gamepad", "DXController", Gamepad.DXController);
+		Gamepad.AimAssistCone = std::clamp(Gamepad.AimAssistCone, 1.0f, 30.0f);
+		Gamepad.AimAssistSlowdown = std::clamp(Gamepad.AimAssistSlowdown, 0.2f, 1.0f);
 
 		const JsonValue& perf = settings["Performance"];
 		ReadFloat(perf, "Performance", "RenderScale", Performance.RenderScale);
@@ -241,6 +250,10 @@ LauncherSettings::LauncherSettings()
 				RenderDevice.UseVSync = setting == "1";
 		}
 		ApplyEnvFloat("DXE_R36S_DEADZONE", Gamepad.DeadZone, 0.0f, 0.9f);
+		ApplyEnvBool("DXE_R36S_AIM_ASSIST", Gamepad.AimAssist);
+		ApplyEnvFloat("DXE_R36S_AIM_CONE", Gamepad.AimAssistCone, 1.0f, 30.0f);
+		ApplyEnvFloat("DXE_R36S_AIM_SLOWDOWN", Gamepad.AimAssistSlowdown, 0.2f, 1.0f);
+		ApplyEnvBool("DXE_R36S_LOG_AIM", Gamepad.LogAim);
 		ApplyEnvInt("DXE_R36S_DETAIL_BANDS", Performance.DetailBands, 0, 3);
 		ApplyEnvBool("DXE_R36S_TRILINEAR", Performance.Trilinear);
 		ApplyEnvInt("DXE_R36S_ANISOTROPY", Performance.Anisotropy, 0, 16);
@@ -268,5 +281,9 @@ LauncherSettings::LauncherSettings()
 			+ " keyboard=" + (Interface.VirtualKeyboard ? "1" : "0")
 			+ " auto-show=" + (Interface.KeyboardAutoShow ? "1" : "0")
 			+ " hints=" + (Interface.ShowButtonHints ? "1" : "0"));
+		LogMessage("R36S aim: assist=" + std::string(Gamepad.AimAssist ? "1" : "0")
+			+ " cone=" + std::to_string(Gamepad.AimAssistCone)
+			+ " slowdown=" + std::to_string(Gamepad.AimAssistSlowdown)
+			+ " log=" + (Gamepad.LogAim ? "1" : "0"));
 	}
 }

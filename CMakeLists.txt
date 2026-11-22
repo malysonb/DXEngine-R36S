@@ -94,6 +94,8 @@ set(DXCOMMON_SOURCES
 	DXEngine/GameFolder.h
 	DXEngine/LauncherSettings.cpp
 	DXEngine/LauncherSettings.h
+	DXEngine/AimAssist.cpp
+	DXEngine/AimAssist.h
 	DXEngine/GamepadInput.cpp
 	DXEngine/GamepadInput.h
 	DXEngine/VirtualKeyboard.cpp

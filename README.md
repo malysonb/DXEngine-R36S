@@ -81,6 +81,11 @@ The fork's work:
   The d-pad walks it, A types, Y deletes, X shifts, L1/R1 change page, Tab moves to the next
   field, START sends Enter, and B hides it (SELECT brings it back). Characters go through the
   engine's own text path, so the edit window's filter, length, undo and sounds still apply.
+- **Aim assist for the stick** (`Gamepad.AimAssist`): a target near the crosshair slows the
+  look stick, and a shot inside the cone is turned to the pawn's chest while the view is put
+  back afterwards, so the shot follows the target and the camera does not jump. The target is
+  the engine's own `Pawn.PickTarget` (another pawn, alive, seen, within 2000 units, no team
+  mate); `AimAssistCone` and `AimAssistSlowdown` set the cone and the look speed.
 - **Measuring it**: `DXE_R36S_LOG_SLOW_MS` logs every frame over a threshold with its stages
   (`tick`, `game`, `draw`, `visibility`, `mesh`, `lights`, `present`), the draw and asset
   breakdown (`surfaces`, `upload`, `lightmaps`, `textureDriver`) and the streaming counters
@@ -94,7 +99,8 @@ exit, exports the `DXE_R36S_*` variables, and passes the profile's stick dead zo
 `DXE_R36S_DEADZONE` and its interface scales and keyboard switches through
 `DXE_R36S_DIALOG_SCALE`, `DXE_R36S_HUD_SCALE`, `DXE_R36S_MENU_SCALE`,
 `DXE_R36S_MENU_CONTROL_SCALE`, `DXE_R36S_VIRTUAL_KEYBOARD`, `DXE_R36S_KEYBOARD_AUTO_SHOW`,
-`DXE_R36S_BUTTON_HINTS` and `DXE_R36S_LOG_UI`. In a conversation the pad's d-pad walks the
+`DXE_R36S_BUTTON_HINTS` and `DXE_R36S_LOG_UI`; the aim assist's switches are
+`DXE_R36S_AIM_ASSIST`, `DXE_R36S_AIM_CONE`, `DXE_R36S_AIM_SLOWDOWN` and `DXE_R36S_LOG_AIM`. In a conversation the pad's d-pad walks the
 replies and either face button presses the one highlighted, as the keyboard's arrows and Enter
 do. The port's `PERFORMANCE.md` (Portuguese) records what each performance knob measured on the
 device and its trade-offs.

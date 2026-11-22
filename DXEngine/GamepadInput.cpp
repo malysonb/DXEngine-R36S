@@ -1,5 +1,6 @@
 #include "Precomp.h"
 #include "GamepadInput.h"
+#include "AimAssist.h"
 #include "Engine.h"
 #include "LauncherSettings.h"
 #include "OriginalCommandLine.h"
@@ -267,6 +268,22 @@ void GamepadInput::Press(Engine* engine, int button, bool ui)
 			return;
 		owner[button] = Owner::Game;
 		pressedKey[button] = key;
+
+		// R2 fires: before the binding runs, the view is put on the pawn
+		// inside the assist cone and put back as soon as the shot has been
+		// traced. Only the shot turns; the camera does not. L2 is the
+		// game's right click (interact), not a shot.
+		if (key == IK_LeftMouse)
+		{
+			Rotator saved(0, 0, 0);
+			if (AimAssist::Get().BeginShot(engine, saved))
+			{
+				engine->OnWindowKeyDown(key);
+				AimAssist::Get().EndShot(engine, saved);
+				return;
+			}
+		}
+
 		engine->OnWindowKeyDown(key);
 		return;
 	}
@@ -514,7 +531,7 @@ void GamepadInput::UIRepeat(Engine* engine, float timeElapsed)
 	}
 }
 
-void GamepadInput::GameAxes(Engine* engine, const GamepadState& state)
+void GamepadInput::GameAxes(Engine* engine, const GamepadState& state, float timeElapsed)
 {
 	const auto& settings = LauncherSettings::Get().Gamepad;
 	const float deadZone = std::clamp(settings.DeadZone, 0.0f, 0.9f);
@@ -525,8 +542,12 @@ void GamepadInput::GameAxes(Engine* engine, const GamepadState& state)
 	// curve: small movements for aiming, full speed at the edge.
 	ApplyDeadZone(lx, ly, deadZone, 1.0f);
 	ApplyDeadZone(rx, ry, deadZone, 1.6f);
-	rx *= settings.LookSensitivityX;
-	ry *= settings.LookSensitivityY * (settings.InvertY ? -1.0f : 1.0f);
+	// A target under the crosshair makes the look linger on it (AimAssist):
+	// the same stick movement turns less, so fine corrections are easier.
+	const bool looking = rx != 0.0f || ry != 0.0f;
+	const float lookScale = AimAssist::Get().LookScale(engine, timeElapsed, looking);
+	rx *= settings.LookSensitivityX * lookScale;
+	ry *= settings.LookSensitivityY * (settings.InvertY ? -1.0f : 1.0f) * lookScale;
 
 	// SDL reports down as positive; UE1 bindings expect up to be.
 	const float values[6] =
@@ -615,6 +636,7 @@ void GamepadInput::Forget(Engine* engine)
 	scrollModifier = false;
 	exitWindow = 0.0f;
 	VirtualKeyboard::Get().Forget();
+	AimAssist::Get().Forget();
 	for (bool& active : axisActive)
 		active = false;
 	pointerRemX = pointerRemY = 0.0f;
@@ -641,7 +663,10 @@ void GamepadInput::Update(Engine* engine, float timeElapsed)
 
 	const bool ui = IsUIOpen(engine);
 	if (ui && !uiLast)
+	{
 		ReleaseGameAxes(engine);   // do not keep walking under a menu
+		AimAssist::Get().Forget();
+	}
 	uiLast = ui;
 	if (ui)
 	{
@@ -722,6 +747,6 @@ void GamepadInput::Update(Engine* engine, float timeElapsed)
 	}
 	else
 	{
-		GameAxes(engine, state);
+		GameAxes(engine, state, timeElapsed);
 	}
 }

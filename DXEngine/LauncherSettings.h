@@ -73,6 +73,14 @@ public:
 		float LookSensitivityY = 1.0f;
 		bool InvertY = false;
 		float CursorSpeed = 1.0f;
+		// The handheld's aim aid (AimAssist): the look stick slows while a
+		// target is near, and a shot inside the cone is turned to it without
+		// moving the camera. Slowdown 1.0 leaves the look speed alone; the
+		// cone is the half-angle from the crosshair, in degrees.
+		bool AimAssist = false;
+		float AimAssistCone = 8.0f;
+		float AimAssistSlowdown = 0.6f;
+		bool LogAim = false;
 		// The pad as the DXController mod's scripts take it: of the keys
 		// above Enabled alone read (DXControllerPad)
 		bool DXController = false;

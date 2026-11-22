@@ -15,6 +15,8 @@ struct GamepadState;
 //  - In play, buttons are the UE1 joystick keys Joy1..Joy12 and JoyPov*, and
 //    the sticks and triggers are the JoyX/Y/U/V/Z/R axes, so what they do is
 //    whatever User.ini binds them to -- the same table as the keyboard.
+//    R2 also passes through the aim assist (AimAssist): a shot near a
+//    target is turned to it, and the look slows while a target is near.
 //  - While Deus Ex's interface is up (a modal window: the main menu, the
 //    inventory, a conversation, a keypad), A sends Enter to the focused
 //    control, the sticks move the pointer, R2 clicks with it, X is the right
@@ -66,7 +68,7 @@ private:
 	void Press(Engine* engine, int button, bool ui);
 	void Release(Engine* engine, int button);
 	void UIRepeat(Engine* engine, float timeElapsed);
-	void GameAxes(Engine* engine, const GamepadState& state);
+	void GameAxes(Engine* engine, const GamepadState& state, float timeElapsed);
 	void ReleaseGameAxes(Engine* engine);
 	void Pointer(Engine* engine, const GamepadState& state, float timeElapsed);
 
