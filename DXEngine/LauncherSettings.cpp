@@ -84,6 +84,17 @@ static void ApplyEnvBool(const char* name, bool& target)
 	}
 }
 
+static void ApplyEnvFloat(const char* name, float& target, float lo, float hi)
+{
+	if (const char* value = std::getenv(name))
+	{
+		char* end = nullptr;
+		float v = std::strtof(value, &end);
+		if (end != value && *end == '\0')
+			target = std::clamp(v, lo, hi);
+	}
+}
+
 LauncherSettings::LauncherSettings()
 {
 	const bool handheld = std::getenv("DXE_R36S_GAMEPAD") != nullptr;
@@ -205,6 +216,7 @@ LauncherSettings::LauncherSettings()
 			if (setting == "0" || setting == "1")
 				RenderDevice.UseVSync = setting == "1";
 		}
+		ApplyEnvFloat("DXE_R36S_DEADZONE", Gamepad.DeadZone, 0.0f, 0.9f);
 		ApplyEnvInt("DXE_R36S_DETAIL_BANDS", Performance.DetailBands, 0, 3);
 		ApplyEnvBool("DXE_R36S_TRILINEAR", Performance.Trilinear);
 		ApplyEnvInt("DXE_R36S_ANISOTROPY", Performance.Anisotropy, 0, 16);

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <vector>
 
 namespace
 {
@@ -93,6 +94,96 @@ namespace
 		// grabs it -- menus, the inventory, conversations and keypads.
 		return engine->dxRootWindow && engine->dxRootWindow->IsKeyboardGrabbed();
 	}
+
+	// The topmost modal as a conversation window (ConWindow for a
+	// first-person speech, ConWindowActive for the interactive one with
+	// replies). A modal further in -- a message box over the conversation --
+	// is not one, and keeps the pad's usual buttons.
+	UWindow* ConversationWindow(Engine* engine)
+	{
+		if (!engine->dxRootWindow)
+			return nullptr;
+		UWindow* modal = engine->dxRootWindow->TopmostModal();
+		if (!modal)
+			return nullptr;
+		NameString name = UObject::GetUClassName(modal);
+		if (name == "ConWindow" || name == "ConWindowActive")
+			return modal;
+		return nullptr;
+	}
+
+	// The conversation's reply buttons, in the tile's order (top to bottom).
+	void CollectChoices(UWindow* window, std::vector<UWindow*>& choices)
+	{
+		for (UWindow* child = window->firstChild(); child; child = child->nextSibling())
+		{
+			if (child->bIsVisible() && UObject::GetUClassName(child) == "ConChoiceWindow")
+				choices.push_back(child);
+			CollectChoices(child, choices);
+		}
+	}
+
+	bool IsChoiceFocused(Engine* engine, const std::vector<UWindow*>& choices)
+	{
+		for (UWindow* w = engine->dxRootWindow->FocusWindow(); w; w = w->parentOwner())
+		{
+			for (UWindow* choice : choices)
+			{
+				if (w == choice)
+					return true;
+			}
+		}
+		return false;
+	}
+
+	// The d-pad walks the conversation's replies, one at a time and round
+	// the ends, as the keyboard's arrows move the focus in the original.
+	// A reply list with none focused starts at its first or last one, so
+	// Up and Down both reach the buttons as soon as they appear.
+	void MoveChoiceFocus(Engine* engine, int step)
+	{
+		UWindow* conversation = ConversationWindow(engine);
+		if (!conversation)
+			return;
+		std::vector<UWindow*> choices;
+		CollectChoices(conversation, choices);
+		if (choices.empty())
+			return;
+
+		int index = -1;
+		UWindow* focus = engine->dxRootWindow->FocusWindow();
+		for (int i = 0; i < (int)choices.size() && index < 0; i++)
+		{
+			for (UWindow* w = focus; w; w = w->parentOwner())
+			{
+				if (w == choices[i])
+				{
+					index = i;
+					break;
+				}
+			}
+		}
+		if (index < 0)
+			index = step < 0 ? (int)choices.size() - 1 : 0;
+		else
+			index = ((index + step) % (int)choices.size() + (int)choices.size()) % (int)choices.size();
+		engine->dxRootWindow->SetRootFocusWindow(choices[index]);
+	}
+
+	// The first reply takes the focus as soon as the list appears, as the
+	// original's choices light up: B then presses it without the d-pad
+	// having to be touched. A pointer click still acts on what it is over.
+	void FocusFirstChoice(Engine* engine)
+	{
+		UWindow* conversation = ConversationWindow(engine);
+		if (!conversation)
+			return;
+		std::vector<UWindow*> choices;
+		CollectChoices(conversation, choices);
+		if (choices.empty() || IsChoiceFocused(engine, choices))
+			return;
+		engine->dxRootWindow->SetRootFocusWindow(choices.front());
+	}
 }
 
 void GamepadInput::Start(PackageManager* packages)
@@ -120,6 +211,10 @@ void GamepadInput::Configure()
 		return;
 	}
 	enabled = LauncherSettings::Get().Gamepad.Enabled;
+	// The setting the sticks are read with (LauncherSettings::Gamepad):
+	// r36s.ini's DeadZone through the launcher's DXE_R36S_DEADZONE, else
+	// Settings.json's Gamepad.DeadZone, else 0.2.
+	LogMessage("Gamepad: deadzone=" + std::to_string(LauncherSettings::Get().Gamepad.DeadZone));
 	// With our own handling on, the backend's button-to-key emulation would
 	// deliver every button twice.
 	DisplayBackend::Get()->SetGamepadKeyEmulation(!enabled);
@@ -152,7 +247,32 @@ void GamepadInput::Press(Engine* engine, int button, bool ui)
 	}
 
 	owner[button] = Owner::UI;
+	uiKey[button] = IK_None;
 	const Point pos(0.0, 0.0);   // the root window clicks at its own pointer
+
+	// In a conversation both face buttons confirm -- the one the pointer
+	// would click (A on SDL's positional layout, the bottom button) and B
+	// -- so whichever the handheld labels B presses the reply highlighted
+	// or under the pointer, as Enter does: Enter is what a reply's button
+	// takes as its press, and a speech with no replies advances on it. The
+	// d-pad walks the replies. Y, SELECT and START still leave.
+	if (ConversationWindow(engine))
+	{
+		if (button == (int)GamepadButton::A || button == (int)GamepadButton::B)
+		{
+			uiKey[button] = IK_Enter;
+			engine->OnWindowKeyDown(IK_Enter);
+			return;
+		}
+		if (button == (int)GamepadButton::DpadUp || button == (int)GamepadButton::DpadDown)
+		{
+			MoveChoiceFocus(engine, button == (int)GamepadButton::DpadUp ? -1 : 1);
+			repeatButton = button;
+			repeatWait = RepeatDelay;
+			return;
+		}
+	}
+
 	switch (button)
 	{
 	case (int)GamepadButton::A: engine->OnWindowMouseDown(pos, IK_LeftMouse); break;
@@ -162,11 +282,11 @@ void GamepadInput::Press(Engine* engine, int button, bool ui)
 	case (int)GamepadButton::B:
 	case (int)GamepadButton::Y:
 	case (int)GamepadButton::Back:
-	case (int)GamepadButton::Start: engine->OnWindowKeyDown(IK_Escape); break;
-	case (int)GamepadButton::DpadUp: engine->OnWindowKeyDown(IK_Up); break;
-	case (int)GamepadButton::DpadDown: engine->OnWindowKeyDown(IK_Down); break;
-	case (int)GamepadButton::DpadLeft: engine->OnWindowKeyDown(IK_Left); break;
-	case (int)GamepadButton::DpadRight: engine->OnWindowKeyDown(IK_Right); break;
+	case (int)GamepadButton::Start: uiKey[button] = IK_Escape; engine->OnWindowKeyDown(IK_Escape); break;
+	case (int)GamepadButton::DpadUp: uiKey[button] = IK_Up; engine->OnWindowKeyDown(IK_Up); break;
+	case (int)GamepadButton::DpadDown: uiKey[button] = IK_Down; engine->OnWindowKeyDown(IK_Down); break;
+	case (int)GamepadButton::DpadLeft: uiKey[button] = IK_Left; engine->OnWindowKeyDown(IK_Left); break;
+	case (int)GamepadButton::DpadRight: uiKey[button] = IK_Right; engine->OnWindowKeyDown(IK_Right); break;
 	case (int)GamepadButton::LeftShoulder: engine->OnWindowMouseWheel(pos, IK_MouseWheelUp); break;
 	case (int)GamepadButton::RightShoulder: engine->OnWindowMouseWheel(pos, IK_MouseWheelDown); break;
 	default: owner[button] = Owner::None; return;
@@ -203,19 +323,21 @@ void GamepadInput::Release(Engine* engine, int button)
 	if (was != Owner::UI)
 		return;
 
+	// The key the press sent, if it sent one: B in a conversation sent
+	// Enter, a d-pad that walked the replies sent none.
+	if (uiKey[button] != IK_None)
+	{
+		EInputKey key = uiKey[button];
+		uiKey[button] = IK_None;
+		engine->OnWindowKeyUp(key);
+		return;
+	}
+
 	const Point pos(0.0, 0.0);
 	switch (button)
 	{
 	case (int)GamepadButton::A: engine->OnWindowMouseUp(pos, IK_LeftMouse); break;
 	case (int)GamepadButton::X: engine->OnWindowMouseUp(pos, IK_RightMouse); break;
-	case (int)GamepadButton::B:
-	case (int)GamepadButton::Y:
-	case (int)GamepadButton::Back:
-	case (int)GamepadButton::Start: engine->OnWindowKeyUp(IK_Escape); break;
-	case (int)GamepadButton::DpadUp: engine->OnWindowKeyUp(IK_Up); break;
-	case (int)GamepadButton::DpadDown: engine->OnWindowKeyUp(IK_Down); break;
-	case (int)GamepadButton::DpadLeft: engine->OnWindowKeyUp(IK_Left); break;
-	case (int)GamepadButton::DpadRight: engine->OnWindowKeyUp(IK_Right); break;
 	default: break;   // the wheel has no release
 	}
 }
@@ -232,6 +354,14 @@ void GamepadInput::UIRepeat(Engine* engine, float timeElapsed)
 		repeatWait = RepeatRate;   // after a long frame, one repeat, not a burst
 
 	const Point pos(0.0, 0.0);
+	if (ConversationWindow(engine))
+	{
+		if (repeatButton == (int)GamepadButton::DpadUp || repeatButton == (int)GamepadButton::DpadDown)
+		{
+			MoveChoiceFocus(engine, repeatButton == (int)GamepadButton::DpadUp ? -1 : 1);
+			return;
+		}
+	}
 	switch (repeatButton)
 	{
 	case (int)GamepadButton::DpadUp: engine->OnWindowKeyDown(IK_Up); break;
@@ -335,6 +465,7 @@ void GamepadInput::Forget(Engine* engine)
 	{
 		wasDown[i] = false;
 		owner[i] = Owner::None;
+		uiKey[i] = IK_None;
 	}
 	repeatButton = -1;
 	exitChordDown = false;
@@ -370,6 +501,8 @@ void GamepadInput::Update(Engine* engine, float timeElapsed)
 	if (ui && !uiLast)
 		ReleaseGameAxes(engine);   // do not keep walking under a menu
 	uiLast = ui;
+	if (ui)
+		FocusFirstChoice(engine);   // a reply list's first button takes the focus as it appears
 
 	bool down[NumButtons];
 	ReadButtons(state, down);

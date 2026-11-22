@@ -82,6 +82,9 @@ private:
 	bool wasDown[NumButtons] = {};
 	Owner owner[NumButtons] = {};
 	EInputKey pressedKey[NumButtons] = {};
+	// The key a UI press sent, or IK_None where it clicked or walked a
+	// conversation's replies; the release sends that key's up.
+	EInputKey uiKey[NumButtons] = {};
 
 	// Held d-pad and shoulder buttons repeat in menus, like a held key.
 	int repeatButton = -1;

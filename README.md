@@ -62,6 +62,11 @@ The fork's work:
   `PrecacheTextures` and `PrecacheLightmaps` fill the texture and light-map caches during the
   load instead of on each area's first sight; `AtlasPartialUpload` uploads only the rectangle a
   new light map wrote, not the whole atlas page.
+- **Larger text on the small panel**: the conversation, choice, HUD log and mission-start text
+  is drawn at 1.5× (help, message boxes, goals, logs and inventory descriptions at 1.25×), with
+  measurement and drawing sharing the scale and a dark drop shadow. Since the game sizes the
+  conversation letterbox from the screen alone, the lower window grows upward to what the speech
+  and the choices ask for, so a long line or a long list of replies stays on the 640×480 screen.
 - **Measuring it**: `DXE_R36S_LOG_SLOW_MS` logs every frame over a threshold with its stages
   (`tick`, `game`, `draw`, `visibility`, `mesh`, `lights`, `present`), the draw and asset
   breakdown (`surfaces`, `upload`, `lightmaps`, `textureDriver`) and the streaming counters
@@ -71,8 +76,11 @@ The fork's work:
 
 The launcher and the `r36s.ini` profile are distributed with the port: it raises the CPU and
 GPU frequency ceilings and sets the `performance` governor for the session, restoring them on
-exit, and exports the `DXE_R36S_*` variables. The port's `PERFORMANCE.md` (Portuguese) records
-what each knob measured on the device and its trade-offs.
+exit, exports the `DXE_R36S_*` variables, and passes the profile's stick dead zone through
+`DXE_R36S_DEADZONE`. In a conversation the pad's d-pad walks the replies and either face button
+presses the one highlighted, as the keyboard's arrows and Enter do. The port's
+`PERFORMANCE.md` (Portuguese) records what each performance knob measured on the device and its
+trade-offs.
 
 The fork's changes are kept to the files it touches, so the engine can still be merged from
 DXEngine as it moves.

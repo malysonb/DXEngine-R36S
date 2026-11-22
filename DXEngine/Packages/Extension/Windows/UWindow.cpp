@@ -1933,6 +1933,49 @@ void UWindow::ResizeChild()
 // How deep the placings in progress go: the outermost clips (ConfigureChild).
 static int ConfigureDepth = 0;
 
+// Whether the R36S profile draws the conversation text larger
+// (UGC::SetWindowTextScale), where every other build keeps the original's.
+static bool HasLargerConversationText()
+{
+	static const bool larger = std::getenv("DXE_R36S_GAMEPAD") != nullptr;
+	return larger;
+}
+
+// The lower window of a conversation -- the tile the speech's lines and the
+// choices are put in -- as tall as its children ask for: the game's scripts
+// size the letterbox from the screen alone, so on the port's larger text a
+// speech with more lines, or a list with more choices, went past the screen's
+// bottom, out of the tile's clip. Grew upward, its bottom left where the
+// script put it, so the slide in still starts below the screen. The measure
+// takes the width the window is given, so the speech wraps as it is drawn;
+// without the larger text the script's own height stands, as the original's.
+static void FitConversationText(UWindow* window, float width, float& y, float& height)
+{
+	if (!HasLargerConversationText() || !window->parentOwner())
+		return;
+	if (UObject::GetUClassName(window) != "TileWindow")
+		return;
+	NameString parentClass = UObject::GetUClassName(window->parentOwner());
+	if (parentClass != "ConWindow" && parentClass != "ConWindowActive")
+		return;
+
+	float askedWidth = width;
+	float wantedHeight = 0.0f;
+	window->ParentRequestedPreferredSize(true, askedWidth, false, wantedHeight);
+	if (!(wantedHeight > height))
+		return;
+
+	float bottom = y + height;
+	float top = bottom - wantedHeight;
+	if (top < 0.0f)
+	{
+		wantedHeight += top;
+		top = 0.0f;
+	}
+	y = top;
+	height = std::max(wantedHeight, 0.0f);
+}
+
 // The original's (XWindow::ConfigureChild 0x1004ec50) sets just what it is
 // given -- a size set on the window only what it asks for, a full alignment
 // only where no parent places it: a tile that fills its width widens a child
@@ -1949,6 +1992,8 @@ void UWindow::ConfigureChild(float newX, float newY, float newWidth, float newHe
 	bConfigured() = true;
 	if (!bIsVisible())
 		return;
+
+	FitConversationText(this, newWidth, newY, newHeight);
 
 	bool changed = Width() != newWidth || Height() != newHeight || bNeedsReconfigure();
 	bNeedsReconfigure() = false;
