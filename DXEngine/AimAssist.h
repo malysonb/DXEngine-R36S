@@ -13,7 +13,9 @@ class UPlayerPawn;
 //    crosshair, so the view lingers on it, and
 //  - a shot inside that cone is turned to the target -- Half-Life's aiming
 //    help -- while the view itself is put back as it was afterwards, so the
-//    camera never jumps.
+//    snap does not jump the camera, and
+//  - while a fire button is held, the view is eased toward the target, which
+//    keeps a running pawn under the crosshair.
 //
 // The target is the engine's own Pawn.PickTarget: another pawn, alive, seen,
 // in front, no team mate, within its 2000-unit reach. Off unless
@@ -33,6 +35,12 @@ public:
 	// `saved` then holds the view it had.
 	bool BeginShot(Engine* engine, Rotator& saved);
 	void EndShot(Engine* engine, const Rotator& saved);
+
+	// While a fire button is held, the view eased toward the target at
+	// Gamepad.AimAssistPull degrees a second. The target is looked for a
+	// few times a second and its last aim kept, so a running pawn stays
+	// under the crosshair without a trace every tick.
+	void ApplyPull(Engine* engine, UPlayerPawn* player, float timeElapsed);
 
 	// The focus or the interface gone: the target and its cached slowdown
 	// forgotten.
@@ -56,4 +64,10 @@ private:
 
 	float cacheRemaining = 0.0f;
 	float cachedScale = 1.0f;
+
+	// The pull's aim, kept between searches: a rotation, not the actor, so a
+	// target destroyed between two searches leaves no stale pointer behind.
+	Rotator pullAim;
+	bool pullAimValid = false;
+	float pullCacheRemaining = 0.0f;
 };

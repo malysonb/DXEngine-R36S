@@ -1,6 +1,7 @@
 
 #include "Precomp.h"
 #include "UPlayerPawn.h"
+#include "AimAssist.h"
 #include "UCamera.h"
 #include "Packages/Engine/UViewport.h"
 #include "Packages/Engine/Actors/Info/ULevelInfo.h"
@@ -140,6 +141,7 @@ bool UPlayerPawn::TickInput(float elapsed)
 
 	ReadPlayerInput(elapsed);
 	CallEvent(this, EventName::PlayerInput, { ExpressionValue::FloatValue(elapsed) });
+	AimAssist::Get().ApplyPull(engine, this, elapsed);
 	CallEvent(this, EventName::PlayerTick, { ExpressionValue::FloatValue(elapsed) });
 	ClearInput();
 

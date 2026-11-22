@@ -186,10 +186,12 @@ LauncherSettings::LauncherSettings()
 		ReadBool(pad, "Gamepad", "AimAssist", Gamepad.AimAssist);
 		ReadFloat(pad, "Gamepad", "AimAssistCone", Gamepad.AimAssistCone);
 		ReadFloat(pad, "Gamepad", "AimAssistSlowdown", Gamepad.AimAssistSlowdown);
+		ReadFloat(pad, "Gamepad", "AimAssistPull", Gamepad.AimAssistPull);
 		ReadBool(pad, "Gamepad", "LogAim", Gamepad.LogAim);
 		ReadBool(pad, "Gamepad", "DXController", Gamepad.DXController);
 		Gamepad.AimAssistCone = std::clamp(Gamepad.AimAssistCone, 1.0f, 30.0f);
 		Gamepad.AimAssistSlowdown = std::clamp(Gamepad.AimAssistSlowdown, 0.2f, 1.0f);
+		Gamepad.AimAssistPull = std::clamp(Gamepad.AimAssistPull, 0.0f, 40.0f);
 
 		const JsonValue& perf = settings["Performance"];
 		ReadFloat(perf, "Performance", "RenderScale", Performance.RenderScale);
@@ -253,6 +255,7 @@ LauncherSettings::LauncherSettings()
 		ApplyEnvBool("DXE_R36S_AIM_ASSIST", Gamepad.AimAssist);
 		ApplyEnvFloat("DXE_R36S_AIM_CONE", Gamepad.AimAssistCone, 1.0f, 30.0f);
 		ApplyEnvFloat("DXE_R36S_AIM_SLOWDOWN", Gamepad.AimAssistSlowdown, 0.2f, 1.0f);
+		ApplyEnvFloat("DXE_R36S_AIM_PULL", Gamepad.AimAssistPull, 0.0f, 40.0f);
 		ApplyEnvBool("DXE_R36S_LOG_AIM", Gamepad.LogAim);
 		ApplyEnvInt("DXE_R36S_DETAIL_BANDS", Performance.DetailBands, 0, 3);
 		ApplyEnvBool("DXE_R36S_TRILINEAR", Performance.Trilinear);
@@ -284,6 +287,7 @@ LauncherSettings::LauncherSettings()
 		LogMessage("R36S aim: assist=" + std::string(Gamepad.AimAssist ? "1" : "0")
 			+ " cone=" + std::to_string(Gamepad.AimAssistCone)
 			+ " slowdown=" + std::to_string(Gamepad.AimAssistSlowdown)
+			+ " pull=" + std::to_string(Gamepad.AimAssistPull)
 			+ " log=" + (Gamepad.LogAim ? "1" : "0"));
 	}
 }

@@ -23,6 +23,23 @@ namespace
 	{
 		return player->Location() + vec3(0.0f, 0.0f, player->EyeHeight());
 	}
+
+	// The cone a setting asks for, scaled to the field of view in use: a
+	// scoped view covers less of the world across the same screen, so the
+	// same screen-space help is a narrower world angle there. The default
+	// 90-degree view leaves the setting as it is.
+	float EffectiveCone(UPlayerPawn* player, float coneDegrees)
+	{
+		float fovScale = 1.0f;
+		if (player)
+		{
+			const float defaultFov = player->DefaultFOV();
+			const float desiredFov = player->DesiredFOV();
+			if (defaultFov > 1.0f && desiredFov > 1.0f)
+				fovScale = std::clamp(desiredFov / defaultFov, 0.15f, 1.5f);
+		}
+		return std::clamp(coneDegrees * fovScale, 0.5f, 30.0f);
+	}
 }
 
 AimAssist& AimAssist::Get()
@@ -64,7 +81,7 @@ UActor* AimAssist::FindTarget(UPlayerPawn* player, float coneDegrees, float& dis
 {
 	distance = 0.0f;
 	aim = 0.0f;
-	const float cone = std::clamp(coneDegrees, 1.0f, 30.0f);
+	const float cone = EffectiveCone(player, coneDegrees);
 	const Rotator view = player->ViewRotation();
 	const vec3 forward = Coords::Rotation(view).XAxis;
 	const vec3 start = EyeLocation(player);
@@ -116,7 +133,7 @@ float AimAssist::LookScale(Engine* engine, float timeElapsed, bool looking)
 			// From the cone's edge (the look speed unchanged) to dead centre
 			// (the full slowdown), so the stick does not step as a target
 			// enters the cone.
-			const float edge = std::cos(std::clamp(settings.AimAssistCone, 1.0f, 30.0f) * Pi / 180.0f);
+			const float edge = std::cos(EffectiveCone(player, settings.AimAssistCone) * Pi / 180.0f);
 			const float span = 1.0f - edge;
 			const float closeness = span > 0.0001f ? std::clamp((aim - edge) / span, 0.0f, 1.0f) : 1.0f;
 			const float slowdown = std::clamp(settings.AimAssistSlowdown, 0.2f, 1.0f);
@@ -165,8 +182,52 @@ void AimAssist::EndShot(Engine* engine, const Rotator& saved)
 	}
 }
 
+void AimAssist::ApplyPull(Engine* engine, UPlayerPawn* player, float timeElapsed)
+{
+	const auto& settings = LauncherSettings::Get().Gamepad;
+	if (!settings.AimAssist || settings.AimAssistPull <= 0.0f || timeElapsed <= 0.0f)
+		return;
+	if (!player || !player->Weapon() || (player->bFire() == 0 && player->bAltFire() == 0))
+	{
+		pullAimValid = false;
+		pullCacheRemaining = 0.0f;
+		return;
+	}
+	if (LocalPlayer(engine) != player)
+		return;
+
+	// The aim is looked for twenty times a second, not every tick: the
+	// rotation kept is the target's place then, not the target itself.
+	const float dt = std::min(timeElapsed, 0.1f);
+	pullCacheRemaining -= dt;
+	if (pullCacheRemaining <= 0.0f)
+	{
+		pullCacheRemaining = 0.05f;
+		float distance = 0.0f;
+		float aim = 0.0f;
+		UActor* target = FindTarget(player, settings.AimAssistCone, distance, aim);
+		pullAimValid = target != nullptr;
+		if (target)
+			pullAim = AimAt(player, target);
+	}
+	if (!pullAimValid)
+		return;
+
+	Rotator view = player->ViewRotation();
+	const int deltaYaw = ((pullAim.Yaw - view.Yaw + 32768) & 0xffff) - 32768;
+	const int deltaPitch = ((pullAim.Pitch - view.Pitch + 32768) & 0xffff) - 32768;
+	const int step = (int)(settings.AimAssistPull * dt * (65536.0f / 360.0f) + 0.5f);
+	if (step <= 0)
+		return;
+	view.Yaw += std::clamp(deltaYaw, -step, step);
+	view.Pitch += std::clamp(deltaPitch, -step, step);
+	player->ViewRotation() = view;
+}
+
 void AimAssist::Forget()
 {
 	cacheRemaining = 0.0f;
 	cachedScale = 1.0f;
+	pullAimValid = false;
+	pullCacheRemaining = 0.0f;
 }
