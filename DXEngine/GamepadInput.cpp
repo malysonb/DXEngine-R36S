@@ -8,6 +8,7 @@
 #include <dxwidgets/window/window.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace
 {
@@ -30,6 +31,26 @@ namespace
 		IK_JoyPovUp, IK_JoyPovDown, IK_JoyPovLeft, IK_JoyPovRight,
 		IK_Joy11,       // L2
 		IK_Joy12,       // R2
+	};
+
+	// R36S positions, in SDL order. A/B/X/Y are south/east/west/north.
+	const EInputKey HandheldKeys[15 + 2] =
+	{
+		IK_Space, IK_X, IK_Semicolon, IK_F1,
+		IK_None, IK_None, IK_Escape,
+		IK_Backspace, IK_LeftBracket,
+		IK_Q, IK_E,
+		IK_None, IK_None, IK_MouseWheelUp, IK_MouseWheelDown,
+		IK_RightMouse, IK_LeftMouse
+	};
+	const EInputKey ShortcutKeys[15 + 2] =
+	{
+		IK_F12, IK_Tab, IK_SingleQuote, IK_F2,
+		IK_None, IK_None, IK_None,
+		IK_None, IK_None,
+		IK_GreyPlus, IK_GreySlash,
+		IK_F3, IK_F4, IK_F5, IK_F6,
+		IK_None, IK_None
 	};
 
 	// Triggers are buttons past half travel; the gap stops a trigger resting
@@ -88,6 +109,7 @@ void GamepadInput::Configure()
 	if (configured)
 		return;
 	configured = true;
+	handheld = std::getenv("DXE_R36S_GAMEPAD") != nullptr;
 	// The original's -nojoy: no pad at all, as its client then opens no
 	// joystick.
 	if (OriginalCommandLine::Get().Param("nojoy"))
@@ -118,10 +140,13 @@ void GamepadInput::Press(Engine* engine, int button, bool ui)
 {
 	if (!ui)
 	{
-		EInputKey key = GameKeys[button];
+		EInputKey key = handheld ? HandheldKeys[button] : GameKeys[button];
+		if (shortcutActive)
+			key = ShortcutKeys[button];
 		if (key == IK_None)
 			return;
 		owner[button] = Owner::Game;
+		pressedKey[button] = key;
 		engine->OnWindowKeyDown(key);
 		return;
 	}
@@ -172,7 +197,7 @@ void GamepadInput::Release(Engine* engine, int button)
 
 	if (was == Owner::Game)
 	{
-		engine->OnWindowKeyUp(GameKeys[button]);
+		engine->OnWindowKeyUp(pressedKey[button]);
 		return;
 	}
 	if (was != Owner::UI)
@@ -312,6 +337,11 @@ void GamepadInput::Forget(Engine* engine)
 		owner[i] = Owner::None;
 	}
 	repeatButton = -1;
+	exitChordDown = false;
+	suppressStart = false;
+	suppressMenuButton = false;
+	menuChordDown = false;
+	exitWindow = 0.0f;
 	for (bool& active : axisActive)
 		active = false;
 	pointerRemX = pointerRemY = 0.0f;
@@ -343,6 +373,54 @@ void GamepadInput::Update(Engine* engine, float timeElapsed)
 
 	bool down[NumButtons];
 	ReadButtons(state, down);
+	if (handheld)
+	{
+		const int back = (int)GamepadButton::Back;
+		const int guide = (int)GamepadButton::Guide;
+		const int start = (int)GamepadButton::Start;
+		const bool select = down[back];
+		const bool fn = down[guide];
+		const bool chord = select && down[start];
+		const bool shoulders = down[(int)GamepadButton::LeftShoulder] &&
+			down[(int)GamepadButton::RightShoulder];
+		const int north = (int)GamepadButton::Y;
+		const int west = (int)GamepadButton::X;
+		if (shoulders && down[north])
+		{
+			engine->OnWindowClose();
+			return;
+		}
+		if (shoulders && down[west])
+			suppressMenuButton = true;
+		else if (!down[west])
+			suppressMenuButton = false;
+		if (suppressMenuButton && !menuChordDown)
+		{
+			engine->OnWindowKeyDown(IK_Escape);
+			engine->OnWindowKeyUp(IK_Escape);
+		}
+		menuChordDown = suppressMenuButton;
+		if (suppressMenuButton)
+			down[west] = false;
+		exitWindow = std::max(0.0f, exitWindow - timeElapsed);
+		if ((fn && down[start]) || (chord && !exitChordDown && exitWindow > 0.0f))
+		{
+			engine->OnWindowClose();
+			return;
+		}
+		if (chord && !exitChordDown)
+			exitWindow = 1.5f;
+		exitChordDown = chord;
+		shortcutActive = select || fn;
+		if (shortcutActive && down[start])
+			suppressStart = true;
+		if (!down[start])
+			suppressStart = false;
+		if (suppressStart)
+			down[start] = false;
+		down[back] = down[guide] = false;
+	}
+
 	for (int i = 0; i < NumButtons; i++)
 	{
 		if (down[i] && !wasDown[i])

@@ -187,6 +187,7 @@ TextureInfo LightSystem::GetLightmap(UModel* model, int lightmapIndex, const Coo
 	int lastStaticUpdate = -100;
 	int lastDynamicUpdate = -100;
 	bool noDynamicLights = engine->client->NoDynamicLights;
+	bool freezesAnimated = engine->client->FreezesAnimatedLights();
 	TempDynLightList.clear();
 	TempAnimatedIndexList.clear();
 
@@ -197,8 +198,10 @@ TextureInfo LightSystem::GetLightmap(UModel* model, int lightmapIndex, const Coo
 		// its shadow bits; a bDynamicLight one, before all else, is a
 		// moving one, with no shadow (dx-reverse-info/render-dll.md, light
 		// maps). With NoDynamicLights, animated lights count as static and
-		// moving ones are left out. An LE_OmniBumpMap one, given no owner,
-		// is a kind of its own, before all that, which no light map takes
+		// moving ones are left out; FreezeAnimatedLights counts them as
+		// static and keeps the moving ones. An LE_OmniBumpMap one, given no
+		// owner, is a kind of its own, before all that, which no light map
+		// takes
 		// (Render.dll AddLight 0x10b08b7a-0x10b08b85; SetupForSurf
 		// 0x10b06c90 merges the static, animated and moving ones): it
 		// lights no surface. A still one's changes are the static map's,
@@ -220,7 +223,7 @@ TextureInfo LightSystem::GetLightmap(UModel* model, int lightmapIndex, const Coo
 				bool animates = LightmapBuilder::LightAnimates(light) || (keptMover && !light->bStatic());
 				if (light->LightEffect() == LE_OmniBumpMap)
 				{
-					if (!light->bDynamicLight() && (noDynamicLights || !animates))
+					if (!light->bDynamicLight() && (freezesAnimated || !animates))
 						lastStaticUpdate = std::max(lastStaticUpdate, light->Light.LastUpdate);
 				}
 				else if (light->bDynamicLight())
@@ -231,7 +234,7 @@ TextureInfo LightSystem::GetLightmap(UModel* model, int lightmapIndex, const Coo
 						TempDynLightList.push_back(light);
 					}
 				}
-				else if (!noDynamicLights && animates)
+				else if (!freezesAnimated && animates)
 				{
 					TempAnimatedIndexList.push_back(lightindex);
 					lastDynamicUpdate = FrameCounter;
@@ -419,6 +422,7 @@ TextureInfo LightSystem::GetLightmap(UModel* model, int lightmapIndex, const Coo
 		texinfo.UpdateHeight = written.y1 - written.y0;
 		texinfo.CacheID = Atlas.PageCacheID(place.Page);
 		texinfo.Format = lmtexture->Format;
+		texinfo.AtlasPage = true;
 		texinfo.Mips = Atlas.PageMip(place.Page);
 		texinfo.NumMips = 1;
 		texinfo.USize = LightmapAtlas::PageSize;

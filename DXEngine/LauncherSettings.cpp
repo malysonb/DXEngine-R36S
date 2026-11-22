@@ -6,6 +6,7 @@
 #include "Utils/Logger.h"
 #include <algorithm>
 #include <climits>
+#include <cstdlib>
 
 LauncherSettings& LauncherSettings::Get()
 {
@@ -59,8 +60,36 @@ static std::string ReadChoice(const JsonValue& section, const char* sectionName,
 	return {};
 }
 
+// The R36S launcher's environment overrides (DXE_R36S_*), applied after
+// Settings.json: a value the launcher's r36s.ini names wins over the file, as
+// its RenderScale and VSync do.
+static void ApplyEnvInt(const char* name, int& target, int lo, int hi)
+{
+	if (const char* value = std::getenv(name))
+	{
+		char* end = nullptr;
+		long v = std::strtol(value, &end, 10);
+		if (end != value && *end == '\0')
+			target = (int)std::clamp(v, (long)lo, (long)hi);
+	}
+}
+
+static void ApplyEnvBool(const char* name, bool& target)
+{
+	if (const char* value = std::getenv(name))
+	{
+		std::string setting(value);
+		if (setting == "0" || setting == "1")
+			target = setting == "1";
+	}
+}
+
 LauncherSettings::LauncherSettings()
 {
+	const bool handheld = std::getenv("DXE_R36S_GAMEPAD") != nullptr;
+	Gamepad.InvertY = handheld;
+	if (handheld)
+		Gamepad.CursorSpeed = 0.45f;
 	try
 	{
 		JsonValue settings = JsonValue::parse(File::read_all_text(GetSettingsFilename()));
@@ -134,6 +163,18 @@ LauncherSettings::LauncherSettings()
 
 		const JsonValue& perf = settings["Performance"];
 		ReadFloat(perf, "Performance", "RenderScale", Performance.RenderScale);
+		ReadInt(perf, "Performance", "DetailBands", Performance.DetailBands);
+		ReadBool(perf, "Performance", "Trilinear", Performance.Trilinear);
+		ReadInt(perf, "Performance", "Anisotropy", Performance.Anisotropy);
+		ReadBool(perf, "Performance", "MacroTwoPass", Performance.MacroTwoPass);
+		ReadBool(perf, "Performance", "SceneRGBA8", Performance.SceneRGBA8);
+		ReadBool(perf, "Performance", "NoDynamicLights", Performance.NoDynamicLights);
+		ReadBool(perf, "Performance", "FreezeAnimatedLights", Performance.FreezeAnimatedLights);
+		ReadBool(perf, "Performance", "PrecacheTextures", Performance.PrecacheTextures);
+		ReadBool(perf, "Performance", "PrecacheLightmaps", Performance.PrecacheLightmaps);
+		ReadInt(perf, "Performance", "StreamVertices", Performance.StreamVertices);
+		ReadInt(perf, "Performance", "StreamIndices", Performance.StreamIndices);
+		ReadBool(perf, "Performance", "StreamOrphan", Performance.StreamOrphan);
 	}
 	catch (const std::exception& e)
 	{
@@ -148,5 +189,33 @@ LauncherSettings::LauncherSettings()
 	catch (...)
 	{
 		LogMessage("Settings.json was not read: the defaults stand");
+	}
+	if (handheld)
+	{
+		if (const char* value = std::getenv("DXE_R36S_RENDER_SCALE"))
+		{
+			char* end = nullptr;
+			float scale = std::strtof(value, &end);
+			if (end != value && *end == '\0' && scale >= 0.25f && scale <= 1.0f)
+				Performance.RenderScale = scale;
+		}
+		if (const char* value = std::getenv("DXE_R36S_VSYNC"))
+		{
+			std::string setting(value);
+			if (setting == "0" || setting == "1")
+				RenderDevice.UseVSync = setting == "1";
+		}
+		ApplyEnvInt("DXE_R36S_DETAIL_BANDS", Performance.DetailBands, 0, 3);
+		ApplyEnvBool("DXE_R36S_TRILINEAR", Performance.Trilinear);
+		ApplyEnvInt("DXE_R36S_ANISOTROPY", Performance.Anisotropy, 0, 16);
+		ApplyEnvBool("DXE_R36S_MACRO_TWO_PASS", Performance.MacroTwoPass);
+		ApplyEnvBool("DXE_R36S_SCENE_RGBA8", Performance.SceneRGBA8);
+		ApplyEnvBool("DXE_R36S_NO_DYNAMIC_LIGHTS", Performance.NoDynamicLights);
+		ApplyEnvBool("DXE_R36S_FREEZE_ANIMATED_LIGHTS", Performance.FreezeAnimatedLights);
+		ApplyEnvBool("DXE_R36S_PRECACHE", Performance.PrecacheTextures);
+		ApplyEnvBool("DXE_R36S_PRECACHE_LIGHTMAPS", Performance.PrecacheLightmaps);
+		ApplyEnvInt("DXE_R36S_STREAM_VERTICES", Performance.StreamVertices, 4096, 1048576);
+		ApplyEnvInt("DXE_R36S_STREAM_INDICES", Performance.StreamIndices, 8192, 4194304);
+		ApplyEnvBool("DXE_R36S_STREAM_ORPHAN", Performance.StreamOrphan);
 	}
 }

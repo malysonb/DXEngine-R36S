@@ -30,6 +30,23 @@ public:
 
 	void DrawGame(float levelTimeElapsed);
 	void OnMapLoaded();
+	// After a map's load, the level's textures uploaded before the first frame
+	// draws, so entering a new area does not upload a roomful of them in one
+	// frame (the hitch the log showed): the BSP's, the brushes' and the
+	// actors' textures, each with its detail and macro map. The launcher's
+	// PrecacheTextures=1 exports DXE_R36S_PRECACHE=1; without it the textures
+	// are left to their first draw, the old way. The first frame after a load
+	// runs it (PrecachePending), not OnMapLoaded: the map's garbage collection
+	// comes between them and flushes the texture cache when a texture died.
+	void PrecacheLevelTextures();
+	// The level's light maps built once, before the first frame draws: every
+	// BSP node's front zone (the side the camera sees; the rare back-side map
+	// is left to its first draw), with each map's atlas rectangle uploaded.
+	// DXE_R36S_PRECACHE_LIGHTMAPS=1 (the launcher's PrecacheLightmaps) turns
+	// it on; it moves the 20-205 ms light map builds into the load, at the
+	// cost of load time and memory. Movers keep their lazy maps.
+	void PrecacheLevelLightmaps();
+	bool PrecachePending = false;
 
 	// The collector's: the coronas, corona lights and iterator actors let
 	// go of the dying (GC::IsDying); the device flushed when a freed
@@ -259,6 +276,11 @@ public:
 	// unlock into the client's DrawCycles (WinDrv.dll 0x1110cabd,
 	// 0x1110ce4e)
 	double BlitStatTime = 0.0;
+	struct DrawStageTimes
+	{
+		double Lock = 0.0, Scene = 0.0, Overlays = 0.0, Post = 0.0;
+		double Lightmaps = 0.0, Fogmaps = 0.0;
+	} DrawStages;
 	// STAT NET's: whether it was drawn the frame before, and the period
 	// whose line went to the log (DrawStats)
 	bool NetStatsDrawn = false;

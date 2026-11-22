@@ -2,8 +2,16 @@
 #include "sdl2_display_window.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <SDL2/SDL_video.h>
+#ifdef __linux__
+#include <fcntl.h>
+#include <linux/input.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#endif
 #ifndef WIN32
 #include <dlfcn.h>
 #include <cstring>
@@ -118,6 +126,46 @@ static void ReadGamepad(SDL_GameController* pad, GamepadState& state)
 	for (int i = 0; i < (int)GamepadButton::Count; i++)
 		state.Buttons[i] = SDL_GameControllerGetButton(pad, (SDL_GameControllerButton)i) != 0;
 
+	// Some handheld mappings omit the system buttons. Allow raw SDL button
+	// indices to fill those gaps without replacing the working stick mapping.
+	SDL_Joystick* joystick = SDL_GameControllerGetJoystick(pad);
+	const int count = SDL_JoystickNumButtons(joystick);
+	const auto readOverride = [&](GamepadButton button, const char* setting)
+	{
+		if (const char* value = std::getenv(setting))
+		{
+			char* end = nullptr;
+			const long index = std::strtol(value, &end, 10);
+			if (end != value && *end == '\0' && index >= 0 && index < count)
+				state.Buttons[(int)button] |= SDL_JoystickGetButton(joystick, (int)index) != 0;
+		}
+	};
+	readOverride(GamepadButton::Start, "DXE_R36S_START_BUTTON");
+	readOverride(GamepadButton::Back, "DXE_R36S_SELECT_BUTTON");
+	readOverride(GamepadButton::Guide, "DXE_R36S_FN_BUTTON");
+
+	if (std::getenv("DXE_R36S_LOG_BUTTONS"))
+	{
+		static SDL_JoystickID lastJoystick = -1;
+		static std::vector<bool> previous;
+		const SDL_JoystickID id = SDL_JoystickInstanceID(joystick);
+		if (id != lastJoystick || (int)previous.size() != count)
+		{
+			lastJoystick = id;
+			previous.assign(std::max(0, count), false);
+			std::fprintf(stderr, "SDL pad: %s (%d raw buttons)\n", SDL_GameControllerName(pad), count);
+		}
+		for (int i = 0; i < count; i++)
+		{
+			const bool down = SDL_JoystickGetButton(joystick, i) != 0;
+			if (down && !previous[i])
+				std::fprintf(stderr, "SDL raw button %d (Start=%d Select=%d FN=%d)\n", i,
+					state.Buttons[(int)GamepadButton::Start], state.Buttons[(int)GamepadButton::Back],
+					state.Buttons[(int)GamepadButton::Guide]);
+			previous[i] = down;
+		}
+	}
+
 	state.Connected = true;
 }
 
@@ -141,6 +189,14 @@ static const char* GamepadTypeName(SDL_GameControllerType type)
 	case SDL_CONTROLLER_TYPE_NVIDIA_SHIELD: return "Standard";
 	default: return "Unknown";
 	}
+}
+
+SDL2DisplayBackend::~SDL2DisplayBackend()
+{
+#ifdef __linux__
+	if (R36SButtonsFd >= 0)
+		close(R36SButtonsFd);
+#endif
 }
 
 bool SDL2DisplayBackend::GetGamepadState(GamepadState& state)
@@ -173,6 +229,38 @@ bool SDL2DisplayBackend::GetGamepadState(GamepadState& state)
 		return false;
 
 	ReadGamepad(Gamepad, state);
+#ifdef __linux__
+	if (R36SButtonsFd == -1)
+	{
+		// Resolve the onboard gamepad in the launcher; event numbers can change.
+		R36SButtonsFd = -2;
+		if (const char* path = std::getenv("DXE_R36S_EVDEV"))
+		{
+			const int fd = open(path, O_RDONLY | O_CLOEXEC);
+			if (fd >= 0)
+			{
+				R36SButtonsFd = fd;
+				std::fprintf(stderr, "R36S system buttons: %s\n", path);
+			}
+			else
+			{
+				std::perror(path);
+			}
+		}
+	}
+	if (R36SButtonsFd >= 0)
+	{
+		unsigned char keys[(KEY_MAX + 8) / 8] = {};
+		if (ioctl(R36SButtonsFd, EVIOCGKEY(sizeof(keys)), keys) >= 0)
+		{
+			const auto held = [&](int code) { return (keys[code / 8] & (1u << (code % 8))) != 0; };
+			state.Buttons[(int)GamepadButton::Start] |= held(BTN_TRIGGER_HAPPY2);
+			state.Buttons[(int)GamepadButton::Back] |= held(BTN_TRIGGER_HAPPY1);
+			state.Buttons[(int)GamepadButton::Guide] |= held(BTN_TRIGGER_HAPPY5);
+			state.Buttons[(int)GamepadButton::RightStick] |= held(BTN_TRIGGER_HAPPY4);
+		}
+	}
+#endif
 	return true;
 }
 

@@ -21,6 +21,8 @@ extern "C"
 GLRenderDevice::GLRenderDevice(Widget* InViewport)
 {
 	Viewport = InViewport;
+	SceneVertexBufferSize = StreamVertexCapacity;
+	SceneIndexBufferSize = StreamIndexCapacity;
 	if (!Init(Viewport->GetNativePixelWidth(), Viewport->GetNativePixelHeight(), false))
 		Exception::Throw("Could not init GLRenderDevice" + (InitError.empty() ? std::string() : ": " + InitError));
 }
@@ -345,7 +347,7 @@ void GLRenderDevice::MakeSceneBuffers()
 void GLRenderDevice::ResizeSceneBuffers(int width, int height, int multisample)
 {
 	const int askedSamples = multisample;
-	GLenum colorInternal = ActiveHdr ? GL_RGBA16F : SceneRGB10A2Failed ? GL_RGBA8 : GL_RGB10_A2;
+	GLenum colorInternal = ActiveHdr ? GL_RGBA16F : (SceneRGB10A2Failed || SceneRGBA8) ? GL_RGBA8 : GL_RGB10_A2;
 
 	// The samples both attachments of the scene's framebuffer take, colour
 	// and depth, each by its format's own list (FormatSamples), halved until
@@ -599,10 +601,20 @@ void GLRenderDevice::CreateSceneShaders()
 	// bugs.md D.41)
 	if (IsGLES && LODBias != 0.0f)
 		sceneDefines.push_back("LOD_BIAS " + std::to_string(LODBias));
-	if (MacroTwoPass)
+	if (MacroTwoPassOn)
 		sceneDefines.push_back("MACRO_TWO_PASS");
-	if (DetailBands)
+	// DETAIL_BANDS' loop runs DetailBandCount times; 0 leaves every detail
+	// texture unsampled (DETAIL_OFF), the one pass the shader otherwise takes
+	// in its place. A value of 1 to 3 is that many of D3DDrv's bands.
+	if (DetailBandCount > 0)
+	{
 		sceneDefines.push_back("DETAIL_BANDS");
+		sceneDefines.push_back("DETAIL_BAND_COUNT " + std::to_string(DetailBandCount));
+	}
+	else
+	{
+		sceneDefines.push_back("DETAIL_OFF");
+	}
 	std::vector<std::string> alphaTestDefines = sceneDefines;
 	alphaTestDefines.push_back("ALPHATEST");
 	ScenePass.FragmentShader = CreateFragmentShader("ScenePass.PixelShader", "shaders/Scene.frag", sceneDefines);
@@ -627,6 +639,13 @@ void GLRenderDevice::CreateSceneShaders()
 		ScenePass.ClipShaderProgram = CreateProgram("ScenePass.ClipShaderProgram", ScenePass.ClipVertexShader, ScenePass.ClipFragmentShader);
 		ScenePass.ClipShaderProgramAlphaTest = CreateProgram("ScenePass.ClipShaderProgramAlphaTest", ScenePass.ClipVertexShader, ScenePass.ClipFragmentShaderAlphaTest);
 	}
+
+	LogMessage("GLDrv: scene detail bands=" + std::to_string(DetailBandCount) +
+		", trilinear=" + (TrilinearFiltering ? std::string("on") : std::string("off")) +
+		", anisotropy=" + std::to_string(SceneAnisotropy) +
+		", macro two-pass=" + (MacroTwoPassOn ? std::string("on") : std::string("off")) +
+		", RGBA8 scene=" + (SceneRGBA8 ? std::string("on") : std::string("off")) +
+		", stream " + std::to_string(SceneVertexBufferSize) + "/" + std::to_string(SceneIndexBufferSize));
 }
 
 void GLRenderDevice::CreateScenePass()
@@ -801,13 +820,17 @@ void GLRenderDevice::CreateSceneSamplers()
 		glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, (i & 1) ? GL_NEAREST : GL_LINEAR);
 		glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, (i & 1) ? GL_NEAREST : GL_LINEAR);
 #else
-		glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, (i & 1) ? GL_NEAREST_MIPMAP_NEAREST : GL_LINEAR_MIPMAP_LINEAR);
+		// A smooth sampler asks for trilinear filtering where the profile
+		// allows it; bilinear between mips costs half the texture fetches,
+		// which tells on the R36S's Mali-G31.
+		GLint minFilter = (i & 1) ? GL_NEAREST_MIPMAP_NEAREST : (TrilinearFiltering ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR_MIPMAP_NEAREST);
+		glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, minFilter);
 		glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, (i & 1) ? GL_NEAREST : GL_LINEAR);
 		// The smooth scene samplers, as the Vulkan device's, a NoSmooth
 		// texture point-sampled as D3DDrv draws it (bugs.md D.40); needs
 		// EXT_texture_filter_anisotropic
-		if (SamplerAnisotropy && (i & 1) == 0)
-			glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT, 8.0f);
+		if (SamplerAnisotropy && SceneAnisotropy > 0 && (i & 1) == 0)
+			glSamplerParameterf(sampler, GL_TEXTURE_MAX_ANISOTROPY_EXT, (GLfloat)SceneAnisotropy);
 #endif
 		glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, addressmode);
 		glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, addressmode);
@@ -1373,6 +1396,13 @@ void GLRenderDevice::Lock(vec4 InFlashScale, vec4 InFlashFog, vec4 ScreenClear)
 	// The frame's counts begin again (GetFrameStats)
 	Stats = {};
 	DrawTimes = {};
+	Uploads->ConversionTime = 0.0;
+	Uploads->DriverTime = 0.0;
+	BatchTime = 0.0;
+	ReusedSceneStates = 0;
+	StreamFlushes = 0;
+	StreamBytes = 0;
+	SceneConstantsValid = false;
 	Textures->CacheStats.BeginFrame();
 
 	if (LODBiasChanged)
@@ -2198,45 +2228,51 @@ void GLRenderDevice::EndFlash()
 
 void GLRenderDevice::SetSceneNode(SceneNode* Frame)
 {
-	DrawBatches();
-
 	CurrentFrame = Frame;
 	Aspect = Frame->FY / Frame->FX;
 	RProjZ = (float)std::tan(radians(Frame->FovAngle) * 0.5);
 	RFX2 = 2.0f * RProjZ / Frame->FX;
 	RFY2 = 2.0f * RProjZ * Aspect / Frame->FY;
 
-	// The scene buffers hold the frame top row first (see the shot's
-	// readback), so a frame's top-down Y is the GL viewport's own: a view in
-	// a window (a security camera's) lands where the Vulkan device puts it.
-	SceneViewport = {};
-	SceneViewport.X = (float)Frame->XB;
-	SceneViewport.Y = (float)Frame->YB;
-	SceneViewport.Width = (float)Frame->X;
-	SceneViewport.Height = (float)Frame->Y;
-	SceneViewport.MinDepth = 0.1f;
-	SceneViewport.MaxDepth = 1.0f;
+	// The scene buffers store the top row first, so the viewport uses YB directly.
+	const GLViewport viewport = {
+		(float)Frame->XB, (float)Frame->YB, (float)Frame->X, (float)Frame->Y, 0.1f, 1.0f
+	};
+	GLScenePushConstants constants;
+	constants.ObjectToView = Frame->WorldToView * Frame->ObjectToWorld;
+	const mat4 projection = PolygonShift(Frame) * mat4::frustum(
+		-RProjZ, RProjZ, -Aspect * RProjZ, Aspect * RProjZ, 1.0f, 32768.0f,
+		handedness::left, clipzrange::negative_positive_w);
+	// Preserve the original multiplication order for the projected coordinates.
+	constants.ObjectToProjection = projection * Frame->WorldToView * Frame->ObjectToWorld;
+	constants.NearClip = Frame->NearClip;
+
+	const bool mirror = Frame->NearClip != vec4(0.0f, 0.0f, 1.0f, -1.0f);
+	const bool clipDistance = ClipDistance && mirror;
+	const bool clipDiscard = ClipDiscard && mirror;
+
+	// GL draws queued geometry with the currently bound uniforms and viewport.
+	// A different BSP node can reuse that state, but a changed view must flush.
+	if (SceneConstantsValid && ClipDistanceOn == clipDistance && ClipDiscardOn == clipDiscard &&
+		AppliedViewport.X == viewport.X && AppliedViewport.Y == viewport.Y &&
+		AppliedViewport.Width == viewport.Width && AppliedViewport.Height == viewport.Height &&
+		AppliedViewport.MinDepth == viewport.MinDepth && AppliedViewport.MaxDepth == viewport.MaxDepth &&
+		constants.NearClip == SceneConstants.NearClip &&
+		std::memcmp(constants.ObjectToView.matrix, SceneConstants.ObjectToView.matrix, sizeof(mat4::matrix)) == 0 &&
+		std::memcmp(constants.ObjectToProjection.matrix, SceneConstants.ObjectToProjection.matrix, sizeof(mat4::matrix)) == 0)
+	{
+		++ReusedSceneStates;
+		return;
+	}
+
+	DrawBatches();
+	SceneViewport = viewport;
 	SetViewport(SceneViewport);
-
-	SceneConstants.ObjectToProjection = PolygonShift(Frame) * mat4::frustum(-RProjZ, RProjZ, -Aspect * RProjZ, Aspect * RProjZ, 1.0f, 32768.0f, handedness::left, clipzrange::negative_positive_w);
-
-	// TBD; do this or do like UE1 does and do the transform on the CPU?
-	// maybe optionally do one or the other? transform on CPU can be super slow --Xaleros
-	SceneConstants.ObjectToProjection = SceneConstants.ObjectToProjection * Frame->WorldToView * Frame->ObjectToWorld;
-
-	SceneConstants.ObjectToView = Frame->WorldToView * Frame->ObjectToWorld;
-	SceneConstants.NearClip = Frame->NearClip;
-
-	// A mirror's frame is clipped at the mirror's plane, its NearClip, as
-	// the Vulkan device clips it -- by a clip distance, or without one by the
-	// programs' clip twins; any other frame keeps the default, the clip off,
-	// so the main frame is drawn as before. The draws queued before are
-	// drawn above, with the last frame's.
-	bool mirror = Frame->NearClip != vec4(0.0f, 0.0f, 1.0f, -1.0f);
-	SetClipDistance(ClipDistance && mirror);
-	ClipDiscardOn = ClipDiscard && mirror;
-
+	SceneConstants = constants;
+	SetClipDistance(clipDistance);
+	ClipDiscardOn = clipDiscard;
 	SetBufferData(GL_UNIFORM_BUFFER, GL_STREAM_DRAW, ScenePass.ConstantBuffer.get(), &SceneConstants, sizeof(GLScenePushConstants));
+	SceneConstantsValid = true;
 }
 
 // The post-process passes and the present write no clip distance, which an
@@ -2345,6 +2381,7 @@ void GLRenderDevice::SetSamplers(int start, int count, GLSampler** samplers)
 
 void GLRenderDevice::SetViewport(const GLViewport& viewport)
 {
+	AppliedViewport = viewport;
 	glViewport((GLint)std::round(viewport.X), (GLint)std::round(viewport.Y), (GLsizei)std::round(viewport.Width), (GLsizei)std::round(viewport.Height));
 	// The f variants: ES has only them, and they are desktop GL 4.2+ core,
 	// which the GLSL-4.20 shaders already require.
@@ -2389,18 +2426,30 @@ void GLRenderDevice::DrawBatches(bool nextBuffer)
 		return; // a frame may still be in flight when the engine tears us down (the intro ends mid-frame)
 
 	// Nothing queued and nothing written since the last flush: nothing to
-	// upload or draw. SetSceneNode flushes per BSP node, hundreds a frame.
+	// upload or draw.
 	if (!nextBuffer && QueuedBatches.empty() && Batch.SceneIndexStart == SceneIndexPos)
 		return;
 
+	StatClock batchClock(BatchTime, TimeDraws);
 	AddDrawBatch();
 
 	// Upload what the draw code wrote since the last flush, then draw it.
 	if (GLSceneVertexPos > UploadedVertexPos || SceneIndexPos > UploadedIndexPos)
 	{
+		StreamFlushes++;
+		StreamBytes += (GLSceneVertexPos - UploadedVertexPos) * sizeof(GLSceneVertex) +
+			(SceneIndexPos - UploadedIndexPos) * sizeof(uint32_t);
+
 		glBindBuffer(GL_ARRAY_BUFFER, ScenePass.VertexBuffer->Handle);
+		// An orphan before the range, where asked for: glBufferSubData into a
+		// buffer the GPU may still read makes a driver wait for it. The draws
+		// already queued keep the storage they were given.
+		if (StreamOrphanUploads)
+			glBufferData(GL_ARRAY_BUFFER, SceneVertexBufferSize * sizeof(GLSceneVertex), nullptr, GL_STREAM_DRAW);
 		glBufferSubData(GL_ARRAY_BUFFER, UploadedVertexPos * sizeof(GLSceneVertex), (GLSceneVertexPos - UploadedVertexPos) * sizeof(GLSceneVertex), StagingVertices.data() + UploadedVertexPos);
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ScenePass.IndexBuffer->Handle);
+		if (StreamOrphanUploads)
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER, SceneIndexBufferSize * sizeof(uint32_t), nullptr, GL_STREAM_DRAW);
 		glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, UploadedIndexPos * sizeof(uint32_t), (SceneIndexPos - UploadedIndexPos) * sizeof(uint32_t), StagingIndexes.data() + UploadedIndexPos);
 		UploadedVertexPos = GLSceneVertexPos;
 		UploadedIndexPos = SceneIndexPos;
@@ -2647,6 +2696,12 @@ RenderDevice::FrameDrawStats GLRenderDevice::GetFrameStats() const
 	stats.Tiles = Stats.Tiles;
 	stats.Flushes = Stats.DrawCalls;
 	stats.SurfaceTime = DrawTimes.Surfaces;
+	stats.BatchTime = BatchTime;
+	stats.TextureConversionTime = Uploads->ConversionTime;
+	stats.TextureDriverTime = Uploads->DriverTime;
+	stats.ReusedSceneStates = ReusedSceneStates;
+	stats.StreamFlushes = StreamFlushes;
+	stats.StreamBytes = StreamBytes;
 	stats.PolygonTime = DrawTimes.Polygons;
 	stats.TileTime = DrawTimes.Tiles;
 	Textures->AddPoolStats(stats.Pools);

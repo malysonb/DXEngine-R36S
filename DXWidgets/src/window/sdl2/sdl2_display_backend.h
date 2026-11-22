@@ -8,6 +8,7 @@ class SDL2DisplayBackend : public DisplayBackend
 {
 public:
 	SDL2DisplayBackend();
+	~SDL2DisplayBackend() override;
 
 	std::unique_ptr<DisplayWindow> Create(DisplayWindowHost* windowHost, WidgetType type, DisplayWindow* owner, RenderAPI renderAPI) override;
 	void ProcessEvents() override;
@@ -33,6 +34,7 @@ public:
 	bool IsSDL2() override { return true; }
 
 private:
+	int R36SButtonsFd = -1;
 	double UIScale = 1.0;
 	SDL_GameController* Gamepad = nullptr;
 	// GetGamepads' pads, each with the sensors switched on on it

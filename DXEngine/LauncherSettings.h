@@ -82,6 +82,43 @@ public:
 	struct
 	{
 		float RenderScale = 1.0f; // the scene's size as a fraction of the window's (RenderDevice::GetRenderScale)
+
+		// The GL device's scene, tuned for the R36S's Mali-G31: the detail
+		// bands D3DDrv draws (0 off, 1 to 3 bands), trilinear filtering, and
+		// the anisotropy a smooth sampler asks for.
+		int DetailBands = 3;
+		bool Trilinear = true;
+		int Anisotropy = 8;
+		// D3DDrv's two-pass macro/light-map maths, in the scene shader's one
+		// pass. No extra texture sampling: on or off alike.
+		bool MacroTwoPass = true;
+		// The scene's colour buffer made RGBA8 instead of RGB10_A2.
+		bool SceneRGBA8 = false;
+		// Force the game's NoDynamicLights: light maps built once, no
+		// animated or flickering light rebuilt every frame (20-40 ms a frame
+		// in some areas on the R36S). False leaves the game's own setting.
+		// Turns the flashlight off too, as the game's option does.
+		bool NoDynamicLights = false;
+		// Bake animating lights once (flickers, pulses, wavers) while still
+		// drawing the bDynamicLight ones every frame: the flashlight, muzzle
+		// flashes and explosions keep working. This is the R36S profile's
+		// choice; NoDynamicLights is the game's own, harsher one.
+		bool FreezeAnimatedLights = false;
+		// Upload the level's textures while the load screen shows, in place
+		// of on each area's first appearance. DXE_R36S_PRECACHE (0 or 1)
+		// wins over this when set.
+		bool PrecacheTextures = false;
+		// Build and upload the level's light maps while the load screen
+		// shows, in place of on each area's first appearance. Costs load
+		// time and memory. DXE_R36S_PRECACHE_LIGHTMAPS wins when set.
+		bool PrecacheLightmaps = false;
+		// The scene's streaming vertex and index buffers: larger buffers flush
+		// fewer times in a frame, and each flush is a driver stall candidate.
+		int StreamVertices = 16 * 1024;
+		int StreamIndices = 32 * 1024;
+		// Upload each flush into a fresh buffer (glBufferData) in place of a
+		// glBufferSubData into one the GPU may still be reading.
+		bool StreamOrphan = false;
 	} Performance;
 
 private:

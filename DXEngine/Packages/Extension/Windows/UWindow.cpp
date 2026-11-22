@@ -10,6 +10,7 @@
 #include "Text/UButtonWindow.h"
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <vector>
 #include "Audio/AudioDevice.h"
 #include "VM/ScriptCall.h"
@@ -137,6 +138,10 @@ float UWindow::GetVirtualScale()
 	// multiple of 640x480 the viewport holds
 	int width, height;
 	GetScreenSize(width, height);
+	// Keep the original UI size at 640x480 and fit smaller handheld viewports.
+	static const bool handheld = std::getenv("DXE_R36S_GAMEPAD") != nullptr;
+	if (handheld && width > 0 && height > 0 && (width <= 640 || height <= 480))
+		return std::min(width / 640.0f, height / 480.0f);
 	// HX's player's (AHXPlayerPawn::ResizeWindows, HX.dll 0x10020ae0): the
 	// viewport over 639.9 and 479.9, 449.9 with a WindowScale of -1, each
 	// truncated, the smaller, at least 1, and no more than a WindowScale

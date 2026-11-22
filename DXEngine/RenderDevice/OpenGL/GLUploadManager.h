@@ -14,10 +14,13 @@ public:
 
 	bool SupportsTextureFormat(TextureFormat Format) const;
 
-	void UploadTexture(GLCachedTexture* tex, const TextureInfo& Info, bool masked);
+	void UploadTexture(GLCachedTexture* tex, const TextureInfo& Info, bool masked, bool storageOnly = false);
 	void UploadTextureRect(GLCachedTexture* tex, const TextureInfo& Info, int x, int y, int w, int h, bool masked);
 
 	void SubmitUploads();
+
+	double ConversionTime = 0.0;
+	double DriverTime = 0.0;
 
 	void UploadWhite(GLTexture2D* image);
 

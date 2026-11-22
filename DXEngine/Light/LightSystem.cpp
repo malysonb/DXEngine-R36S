@@ -165,8 +165,9 @@ void LightSystem::BeginFrame()
 		}
 
 		// An animating light invalidates what was built from it -- unless
-		// the client's NoDynamicLights stills it
-		if (LightmapBuilder::LightAnimates(actor) && !engine->client->NoDynamicLights)
+		// the client's NoDynamicLights or the R36S profile's
+		// FreezeAnimatedLights stills it
+		if (LightmapBuilder::LightAnimates(actor) && !engine->client->FreezesAnimatedLights())
 			actor->Light.LastUpdate = FrameCounter;
 
 		LightTree.Lights.push_back(actor);

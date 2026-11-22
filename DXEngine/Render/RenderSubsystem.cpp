@@ -1,4 +1,5 @@
 
+#include <cstdlib>
 #include "Precomp.h"
 #include "RenderSubsystem.h"
 #include "RenderDevice/RenderDevice.h"
@@ -12,11 +13,41 @@
 #include "Packages/Engine/Resources/UPalette.h"
 #include "Packages/Engine/Resources/Level/UModel.h"
 #include "Packages/Engine/Resources/Level/UPolys.h"
+#include "Packages/Engine/Resources/Textures/UTexture.h"
+#include "Packages/Engine/Resources/Mesh/UMesh.h"
+#include "Packages/Engine/Actors/UActor.h"
+#include "Packages/Engine/Actors/Info/UZoneInfo.h"
 #include "Packages/Extension/Windows/TabGroup/URootWindow.h"
 #include "VM/ScriptCall.h"
 #include "Engine.h"
+#include "LauncherSettings.h"
 #include "Packages/Engine/Actors/Brush/UMover.h"
 #include <chrono>
+#include <set>
+
+// A launcher knob's effective value: the environment's 0 or 1 wins over
+// Settings.json's Performance block, and anything else leaves the file's. The
+// launcher exports both, so a run by hand and one by the launcher agree.
+static bool LauncherFlag(const char* env, bool fromSettings)
+{
+	if (const char* value = std::getenv(env))
+	{
+		std::string setting(value);
+		if (setting == "0" || setting == "1")
+			return setting == "1";
+	}
+	return fromSettings;
+}
+
+static bool PrecacheTexturesEnabled()
+{
+	return LauncherFlag("DXE_R36S_PRECACHE", LauncherSettings::Get().Performance.PrecacheTextures);
+}
+
+static bool PrecacheLightmapsEnabled()
+{
+	return LauncherFlag("DXE_R36S_PRECACHE_LIGHTMAPS", LauncherSettings::Get().Performance.PrecacheLightmaps);
+}
 
 RenderSubsystem::RenderSubsystem(RenderDevice* renderdevice) : Device(renderdevice)
 {
@@ -24,6 +55,18 @@ RenderSubsystem::RenderSubsystem(RenderDevice* renderdevice) : Device(renderdevi
 
 void RenderSubsystem::DrawGame(float levelTimeElapsed)
 {
+	if (PrecachePending)
+	{
+		PrecachePending = false;
+		// The engine's own line, so a launcher that forgot to export the
+		// variables cannot make a test look like the knobs did nothing.
+		LogMessage("R36S setting: NoDynamicLights=" + std::to_string(engine->client->NoDynamicLights ? 1 : 0)
+			+ " FreezeAnimatedLights=" + std::to_string(engine->client->FreezeAnimatedLights ? 1 : 0)
+			+ " PrecacheTextures=" + std::to_string(PrecacheTexturesEnabled() ? 1 : 0)
+			+ " PrecacheLightmaps=" + std::to_string(PrecacheLightmapsEnabled() ? 1 : 0));
+		PrecacheLevelTextures();
+		PrecacheLevelLightmaps();
+	}
 	DrawnSinceFlush = true;
 	LevelTimeElapsed = levelTimeElapsed;
 	TextureClock = UTexture::ClockNow();
@@ -83,9 +126,11 @@ void RenderSubsystem::DrawGame(float levelTimeElapsed)
 	Device->Brightness = engine->client->BrightnessInUse;
 	// The device's draws timed while STAT HARDWARE is shown (RenderDevice::
 	// TimeDraws)
-	Device->TimeDraws = StatPanels[StatHardware];
+	static const bool logSlowFrames = std::getenv("DXE_R36S_LOG_SLOW_FRAMES") != nullptr;
+	Device->TimeDraws = StatPanels[StatHardware] || logSlowFrames;
+	DrawStages = {};
 	{
-		StatClock clock(BlitStatTime);
+		StatClock clock(DrawStages.Lock, logSlowFrames);
 		Device->Lock(vec4(flashScale, 0.0f), vec4(flashFog, 0.0f), vec4(0.0f));
 	}
 	FrameInProgress = true;
@@ -109,15 +154,24 @@ void RenderSubsystem::DrawGame(float levelTimeElapsed)
 		UPlayerPawn* viewer = engine->viewport->Actor();
 		if (viewer && viewer->XLevel() == engine->Level && (!engine->dxRootWindow || engine->dxRootWindow->bRender()))
 		{
-			DrawScene();
-			RenderOverlays();
-			Device->TakeBloom();
+			{
+				StatClock clock(DrawStages.Scene, logSlowFrames);
+				DrawScene();
+			}
+			{
+				StatClock clock(DrawStages.Overlays, logSlowFrames);
+				RenderOverlays();
+				Device->TakeBloom();
+			}
 		}
 		PostRenderFlash();
 		Device->EndFlash();
 	}
 
-	PostRender();
+	{
+		StatClock clock(DrawStages.Post, logSlowFrames);
+		PostRender();
+	}
 
 	BlitStatTime = 0.0;
 	{
@@ -310,4 +364,136 @@ void RenderSubsystem::OnMapLoaded()
 	StaticIteratorActors.clear();
 	MirrorMovers.clear();
 	StaticActorsLevel = nullptr;
+	// The first frame after the load runs the precache: the level's garbage
+	// collection comes first and flushes the texture cache when one died, so
+	// uploading here would be undone before the frame that draws it.
+	PrecachePending = true;
+}
+
+// A level's textures uploaded once, at its load: the BSP's surfaces and
+// polys, each actor's sprite, skin, multi-skins, mesh textures and brush,
+// and each texture's detail and macro map, as the draw that first sets one
+// would upload it. The R36S's log showed a new area uploading 28 to 39
+// textures in one frame, 4-5 ms each (the Mali driver's texture calls); the
+// load already runs under a loading screen, so the cost belongs there. A
+// texture the device already holds is skipped by its cache (GetTexture).
+void RenderSubsystem::PrecacheLevelTextures()
+{
+	if (!PrecacheTexturesEnabled() || !engine->Level)
+		return;
+
+	auto start = std::chrono::steady_clock::now();
+	std::set<UTexture*> seen;
+	int count = 0;
+
+	// The texture its animation shows now, as the draw's GetAnimTexture
+	// takes it: precaching the base frame would leave the first frame of an
+	// animation to upload when it first shows.
+	auto add = [&](UTexture* tex, uint32_t flags)
+	{
+		if (!tex)
+			return;
+		UpdateTexture(tex);
+		UTexture* frame = tex->GetAnimTexture();
+		if (!frame)
+			frame = tex;
+		if (!seen.insert(frame).second)
+			return;
+		TextureInfo info;
+		UpdateTextureInfo(info, frame);
+		Device->PrecacheTexture(info, flags);
+		count++;
+	};
+	auto addWithDetail = [&](UTexture* tex, uint32_t flags)
+	{
+		add(tex, flags);
+		UTexture* frame = tex ? tex->GetAnimTexture() : nullptr;
+		if (!frame)
+			return;
+		add(frame->DetailTexture(), 0);
+		add(frame->MacroTexture(), 0);
+	};
+	auto addModel = [&](UModel* model)
+	{
+		if (!model)
+			return;
+		for (BspSurface& surface : model->Surfaces)
+			addWithDetail(surface.Material, surface.PolyFlags);
+		if (model->Polys)
+		{
+			for (Poly& poly : model->Polys->Polys)
+				addWithDetail(poly.Texture, poly.PolyFlags);
+		}
+	};
+
+	addModel(engine->Level->Model);
+	for (UActor* actor : engine->Level->Actors)
+	{
+		if (!actor)
+			continue;
+		UTexture* tex = actor->Texture();
+		addWithDetail(tex, tex ? tex->PolyFlags() : 0);
+		tex = actor->Skin();
+		addWithDetail(tex, tex ? tex->PolyFlags() : 0);
+		FixedArrayView<UTexture*, 8> skins = actor->MultiSkins();
+		for (int i = 0; i < 8; i++)
+		{
+			tex = skins[i];
+			addWithDetail(tex, tex ? tex->PolyFlags() : 0);
+		}
+		if (UMesh* mesh = actor->Mesh())
+		{
+			for (UTexture* meshTex : mesh->Textures)
+				addWithDetail(meshTex, meshTex ? meshTex->PolyFlags() : 0);
+		}
+		addModel(actor->Brush());
+	}
+
+	double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+	LogMessage("R36S precache: " + std::to_string(count) + " textures, " + std::to_string((int)ms) + " ms");
+}
+
+// The level's light maps built once, before the first frame draws: each BSP
+// node's front zone, the side the camera usually sees. The engine builds a
+// surface's map the first time it is drawn, which cost 20-205 ms a frame when
+// a new area appeared (the log's lightmaps stage); here the cost goes to the
+// load, and each map's atlas rectangle is uploaded before the scene draws it.
+// The rare back-side map, and a mover's, stay lazy. Off by default in the
+// engine; the R36S launcher's PrecacheLightmaps=1 exports
+// DXE_R36S_PRECACHE_LIGHTMAPS=1.
+void RenderSubsystem::PrecacheLevelLightmaps()
+{
+	if (!PrecacheLightmapsEnabled() || !engine->Level || !engine->Level->Model)
+		return;
+
+	UModel* model = engine->Level->Model;
+	if (model->Nodes.empty())
+		return;
+
+	auto start = std::chrono::steady_clock::now();
+	std::set<std::pair<int, UZoneInfo*>> seen;
+	int count = 0;
+	for (BspNode& node : model->Nodes)
+	{
+		if (node.Surf < 0 || (size_t)node.Surf >= model->Surfaces.size())
+			continue;
+		if (node.Zone1 < 0 || (size_t)node.Zone1 >= model->Zones.size())
+			continue;
+		BspSurface& surface = model->Surfaces[node.Surf];
+		if (surface.LightMap < 0 || (size_t)surface.LightMap >= model->LightMap.size())
+			continue;
+		UZoneInfo* zone = engine->GetZoneActor(node.Zone1);
+		if (!zone)
+			continue;
+		if (!seen.insert({ surface.LightMap, zone }).second)
+			continue;
+
+		TextureInfo info = engine->Level->Light.GetLevelLightmap(surface, zone, model);
+		if (info.NumMips > 0 && info.Mips)
+			Device->PrecacheTexture(info, 0);
+		count++;
+	}
+
+	double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+	LogMessage("R36S lightmap precache: " + std::to_string(count) + " maps, " + std::to_string((int)ms) + " ms");
 }

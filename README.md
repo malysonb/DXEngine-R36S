@@ -14,6 +14,11 @@ desktop to a handheld.
 launcher or a patch replaced plays too, with a warning. None of the game's files are included.
 Made with AI assistance.
 
+> **This is the R36S fork of DXEngine**, tuned for the Anbernic R36S (aarch64, Mali-G31,
+> 640×480, dArkOS). The engine, its scripts and its renderers are DXEngine's: every R36S
+> setting keeps upstream's default when the port's launcher leaves it out, so a desktop build
+> behaves as DXEngine does. [What the fork changes](#the-r36s-fork).
+
 ## Features
 
 - **Deus Ex as the original plays it.** The game's own scripts run on the engine: its
@@ -27,12 +32,50 @@ Made with AI assistance.
   its menus included.
 - **Linux and Windows.** Linux on x86_64 and aarch64, glibc 2.28 or newer, so any current
   distribution; Windows 10 (1903) or newer on x86_64.
-- **From the desktop to the handheld.** The game plays on a PC and on the TrimUI Smart Pro, an
-  aarch64 handheld with a PowerVR GPU.
+- **From the desktop to the handheld.** The game plays on a PC, on the TrimUI Smart Pro (an
+  aarch64 handheld with a PowerVR GPU) and on the Anbernic R36S (aarch64, Mali-G31), which this
+  fork is tuned for.
 - **Made for a launcher.**
   [DXLauncher](https://github.com/JuggyMcNutty/deusex-launcher/blob/linux-x86_64/README.md)
   keeps the player's settings and saves in profiles and starts the engine; the engine runs on
   its own too, or as a dedicated server.
+
+## The R36S fork
+
+This repository is a fork of [DXEngine](https://github.com/JuggyMcNutty/DXEngine) that targets
+the **Anbernic R36S**: an aarch64 handheld (Rockchip RK3326, Mali-G31 with the vendor's OpenGL
+ES 3.2 driver, a 640×480 panel) running dArkOS. It is the same engine — the game's scripts, the
+Vulkan/OpenGL/software renderers — with a performance profile for that hardware, the diagnostics
+to measure it, and a cross build. Nothing here changes a desktop build: each setting keeps
+DXEngine's default unless the port's launcher turns it on.
+
+The fork's work:
+
+- **Settings for slow hardware** (`LauncherSettings::Performance`, read from `Settings.json`'s
+  `"Performance"` block and overridden by `DXE_R36S_*` environment variables): the render
+  scale, vsync, the scene's detail bands (0 to 3), trilinear filtering and anisotropy, an RGBA8
+  scene buffer, and the scene's streaming vertex/index buffer sizes with optional orphaning.
+- **Light maps on a small GPU**: `FreezeAnimatedLights` bakes flickering and pulsing lights once
+  — the per-frame light-map rebuild cost 20-40 ms in some areas — while the `bDynamicLight`
+  ones (the flashlight, muzzle flashes, explosions) still light their surfaces. `NoDynamicLights`
+  is the game's own, harsher option, and leaves those out too (which turns the flashlight off);
+  `PrecacheTextures` and `PrecacheLightmaps` fill the texture and light-map caches during the
+  load instead of on each area's first sight; `AtlasPartialUpload` uploads only the rectangle a
+  new light map wrote, not the whole atlas page.
+- **Measuring it**: `DXE_R36S_LOG_SLOW_MS` logs every frame over a threshold with its stages
+  (`tick`, `game`, `draw`, `visibility`, `mesh`, `lights`, `present`), the draw and asset
+  breakdown (`surfaces`, `upload`, `lightmaps`, `textureDriver`) and the streaming counters
+  (`streamFlushes`, `streamKiB`). The first frame of each map also says what the engine applied,
+  as `R36S setting: ...`, so a launcher that forgot a variable cannot pass for a knob that did
+  nothing.
+
+The launcher and the `r36s.ini` profile are distributed with the port: it raises the CPU and
+GPU frequency ceilings and sets the `performance` governor for the session, restoring them on
+exit, and exports the `DXE_R36S_*` variables. The port's `PERFORMANCE.md` (Portuguese) records
+what each knob measured on the device and its trade-offs.
+
+The fork's changes are kept to the files it touches, so the engine can still be merged from
+DXEngine as it moves.
 
 ## Screenshots
 
@@ -79,6 +122,9 @@ DXLauncher and the engine together. This repository's
 [releases](https://github.com/JuggyMcNutty/DXEngine/releases) have the engine alone, for each
 platform. GitHub's CI builds both, on a pull request here and when Port Ex Machina's pins take a
 commit ([CI](https://github.com/JuggyMcNutty/port-ex-machina/blob/main/docs/DEVELOPMENT.md#ci)).
+
+This fork does not use those releases: its R36S build is distributed with the port, beside the
+device's launcher and `r36s.ini`.
 
 ## Building and running
 
@@ -168,6 +214,16 @@ The build's own switches:
   drawing on the CPU into its window's bitmap on every core: DXLauncher's Software renderer, and
   the device that draws where no GPU device starts
   ([the software device](docs/ENGINE.md#rendering)).
+
+### Building for the R36S
+
+The R36S build is aarch64. It can be made on the device itself (Debian 13/dArkOS, GCC, SDL2 and
+OpenAL) or cross-compiled from x86_64 with `aarch64-linux-gnu-g++` and an aarch64 sysroot that
+carries the device's glibc, SDL2 and OpenAL. The port's tree distributes what that needs:
+`build.sh`, `cmake/aarch64-linux-gnu.cmake` and `scripts/make-sysroot.sh`, which takes the
+sysroot from a running aarch64 container so the cross build asks the handheld for no symbol its
+glibc lacks. The result is `DXEngine` beside `DXEngine.pk3`, with `RenderScale=1.0` (the native
+640×480) by default.
 
 ## Status
 

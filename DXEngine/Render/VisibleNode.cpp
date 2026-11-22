@@ -106,6 +106,7 @@ void VisibleNode::Draw(VisibleFrame* frame)
 		// the original's SetupForSurf clocks its (Render.dll 0x10b06cd2-
 		// 0x10b08993)
 		StatClock clock(engine->render->PanelStats.Illum);
+		StatClock mapClock(engine->render->DrawStages.Lightmaps, frame->Device->TimeDraws);
 		lightmap = engine->Level->Light.GetLevelLightmap(surface, zoneActor, model);
 		// Deus Ex's fog map, as the original's renderer makes it
 		// (dx-reverse-info render-dll.md, light maps): only with the render
@@ -114,7 +115,10 @@ void VisibleNode::Draw(VisibleFrame* frame)
 		// from, which a fog zone too; Surreal Engine took the camera's zone for
 		// every surface, fogging one seen from a zone without fog.
 		if (frame->VolumetricFog && (PolyFlags & PF_Translucent) == 0)
+		{
+			mapClock.Next(engine->render->DrawStages.Fogmaps);
 			fogmap = engine->Level->Light.GetLevelFogmap(surface, zoneActor, model);
+		}
 	}
 
 	SurfaceInfo surfaceinfo;

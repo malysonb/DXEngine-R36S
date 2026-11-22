@@ -3,6 +3,21 @@
 #include "GLTextureManager.h"
 #include "GLRenderDevice.h"
 #include "GLCachedTexture.h"
+#include <cstdlib>
+
+// The R36S's lightmap atlas pages upload only the rectangle each map wrote,
+// not the whole 1024x1024 page. Off (DXE_R36S_ATLAS_PARTIAL=0) falls back to
+// the old whole-page upload, for a build or driver where the partial one
+// shows an artifact.
+static bool AtlasPartialUploadEnabled()
+{
+	static const bool enabled = []
+	{
+		const char* value = std::getenv("DXE_R36S_ATLAS_PARTIAL");
+		return !value || std::string(value) != "0";
+	}();
+	return enabled;
+}
 
 GLTextureManager::GLTextureManager(GLRenderDevice* renderer) : renderer(renderer)
 {
@@ -29,6 +44,8 @@ void GLTextureManager::UpdateTextureRect(TextureInfo* info, int x, int y, int w,
 	GLCachedTexture* tex = GetFromCache(info->CacheID);
 	if (tex)
 	{
+		if (renderer->IsLocked)
+			renderer->DrawBatches();
 		CacheStats.Upload(tex->Stat, *info, false, [&] { renderer->Uploads->UploadTextureRect(tex, *info, x, y, w, h, tex->Masked); });
 		info->bRealtimeChanged = 0;
 	}
@@ -52,11 +69,19 @@ GLCachedTexture* GLTextureManager::GetTexture(TextureInfo* info, bool masked)
 	// change makes it again, as the draw then is; a rectangle of it changed
 	// keeps the copy's own way
 	GLCachedTexture* tex = GetFromCache(info->CacheID);
-	if (info->bRealtimeChanged)
+	const bool realtimeChanged = info->bRealtimeChanged;
+	if (realtimeChanged)
 	{
 		info->bRealtimeChanged = 0;
 		if (tex)
 		{
+			// Queued draws must sample the old contents before this upload.
+			// A lightmap atlas page's rect is the map drawn now, which no
+			// queued draw samples yet: flushing there submitted every earlier
+			// surface's draws before each rect, and the Mali driver then made
+			// the upload wait for them (the 4 ms a rect the log showed).
+			if (renderer->IsLocked && !(info->AtlasPage && AtlasPartialUploadEnabled()))
+				renderer->DrawBatches();
 			if (info->UpdateWidth > 0)
 			{
 				CacheStats.Upload(tex->Stat, *info, false, [&] { renderer->Uploads->UploadTextureRect(tex, *info, info->UpdateX, info->UpdateY, info->UpdateWidth, info->UpdateHeight, tex->Masked); });
@@ -77,7 +102,18 @@ GLCachedTexture* GLTextureManager::GetTexture(TextureInfo* info, bool masked)
 		LastTextureResult = { info->CacheID, tex };
 
 		tex->Masked = masked;
-		CacheStats.Upload(tex->Stat, *info, true, [&] { renderer->Uploads->UploadTexture(tex, *info, masked); });
+		if (info->AtlasPage && realtimeChanged && info->UpdateWidth > 0 && AtlasPartialUploadEnabled())
+		{
+			// The page's storage made, but only the map just written sent:
+			// the rest of the page holds maps not drawn yet, and each uploads
+			// its own rectangle when its first draw comes.
+			CacheStats.Upload(tex->Stat, *info, true, [&] { renderer->Uploads->UploadTexture(tex, *info, masked, true); });
+			CacheStats.Upload(tex->Stat, *info, false, [&] { renderer->Uploads->UploadTextureRect(tex, *info, info->UpdateX, info->UpdateY, info->UpdateWidth, info->UpdateHeight, masked); });
+		}
+		else
+		{
+			CacheStats.Upload(tex->Stat, *info, true, [&] { renderer->Uploads->UploadTexture(tex, *info, masked); });
+		}
 	}
 
 	float uscale = info->UScale;

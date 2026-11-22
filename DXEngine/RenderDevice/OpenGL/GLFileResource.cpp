@@ -74,6 +74,10 @@ std::string GLFileResource::readAllText(const std::string& filename)
 
 			layout(location = 0) out vec4 outColor;
 
+			#ifndef DETAIL_BAND_COUNT
+			#define DETAIL_BAND_COUNT 3
+			#endif
+
 			vec4 darkClamp(vec4 c)
 			{
 			#if defined(NO_DARKCLAMP)
@@ -136,7 +140,8 @@ std::string GLFileResource::readAllText(const std::string& filename)
 
 				if ((flags & 4u) != 0u) // Detail texture
 				{
-					#if defined(DETAIL_BANDS)
+				#if !defined(DETAIL_OFF)
+				#if defined(DETAIL_BANDS)
 					// D3DDrv's three passes, a band each (d3ddrv-dll.md, detail
 					// textures): nearer than 380 units, each further bound 4.223
 					// times nearer and its grain 4.223 times finer, the detail
@@ -148,7 +153,7 @@ std::string GLFileResource::readAllText(const std::string& filename)
 					vec2 detailDy = dFdy(texCoord4);
 					float bound = 380.0;
 					float repeat = 1.0;
-					for (int band = 0; band < 3; band++)
+					for (int band = 0; band < DETAIL_BAND_COUNT; band++)
 					{
 						if (z < bound)
 						{
@@ -159,12 +164,13 @@ std::string GLFileResource::readAllText(const std::string& filename)
 						bound /= 4.223;
 						repeat *= 4.223;
 					}
-					#else
+				#else
 					float fadedistance = 380.0f;
 					float a = clamp(2.0f - (1.0f / gl_FragCoord.w) / fadedistance, 0.0f, 1.0f);
 					vec4 detailColor = (textureDetail(texCoord4) - 0.5) * 0.8 + 1.0;
 					outColor.rgb = mix(outColor.rgb, outColor.rgb * detailColor.rgb, a);
-					#endif
+				#endif
+				#endif
 				}
 				else if ((flags & 8u) != 0u) // Fog map
 				{

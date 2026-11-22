@@ -5,6 +5,8 @@
 #include <SDL2/SDL_vulkan.h>
 #include <cstring>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include "dxwidgets/core/image.h"
 
 Uint32 SDL2DisplayWindow::PaintEventNumber = 0xffffffff;
@@ -580,9 +582,15 @@ void SDL2DisplayWindow::SetClipboardText(const std::string& text)
 
 void SDL2DisplayWindow::ProcessEvents()
 {
+	static const bool logButtons = std::getenv("DXE_R36S_LOG_BUTTONS") != nullptr;
 	SDL_Event event;
 	while (SDL_PollEvent(&event) != 0)
 	{
+		if (logButtons && event.type == SDL_KEYDOWN && !event.key.repeat)
+			std::fprintf(stderr, "SDL key: %s (scancode=%d)\n",
+				SDL_GetKeyName(event.key.keysym.sym), (int)event.key.keysym.scancode);
+		if (logButtons && event.type == SDL_CONTROLLERBUTTONDOWN)
+			std::fprintf(stderr, "SDL mapped button: %d\n", (int)event.cbutton.button);
 		DispatchEvent(event);
 	}
 }

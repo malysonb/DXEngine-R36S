@@ -96,6 +96,14 @@ struct TextureInfo
 	uint64_t CacheID = 0;
 	bool bRealtimeChanged = false;
 
+	// A lightmap atlas page: its mip holds every map in the page, but only the
+	// part bRealtimeChanged names (Update*) has been written for the map drawn
+	// now. A device making the texture may allocate it and upload only that
+	// rectangle, leaving the rest for the maps that come; a whole upload would
+	// send the page's undrawn areas and, at 1024x1024 RGBA32F, cost tens of
+	// milliseconds on the R36S.
+	bool AtlasPage = false;
+
 	// With bRealtimeChanged, the part of a one-mip texture that changed, when
 	// not all of it did (UpdateWidth > 0): a device that already holds the
 	// texture uploads only that part
@@ -187,6 +195,12 @@ public:
 		int Tiles = 0;
 		int Flushes = 0;
 		double SurfaceTime = 0.0;
+		double BatchTime = 0.0;
+		double TextureConversionTime = 0.0, TextureDriverTime = 0.0;
+		int ReusedSceneStates = 0;
+		// The streaming buffers: flushes a frame, and the bytes each sent up
+		int StreamFlushes = 0;
+		size_t StreamBytes = 0;
 		double PolygonTime = 0.0;
 		double TileTime = 0.0;
 		Array<TexturePoolStats> Pools;
@@ -329,6 +343,19 @@ public:
 	bool GammaCorrectScreenshots = true;
 	bool UseDebugLayer = false;
 	bool CPUDriver = false; // Mesa's CPU driver asked for: lavapipe, llvmpipe
+
+	// The R36S performance profile (LauncherSettings::Performance), read by
+	// the GL device: the detail bands its scene shader loops over, the
+	// filters its samplers ask for, the scene's colour format, and the
+	// streaming buffers' sizes.
+	int DetailBandCount = 3;
+	bool TrilinearFiltering = true;
+	int SceneAnisotropy = 8;
+	bool MacroTwoPassOn = true;
+	bool SceneRGBA8 = false;
+	int StreamVertexCapacity = 16 * 1024;
+	int StreamIndexCapacity = 32 * 1024;
+	bool StreamOrphanUploads = false;
 
 private:
 	// The scale the GPU's memory held the scene to (LowerRenderScale), and

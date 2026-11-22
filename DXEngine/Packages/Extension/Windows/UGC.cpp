@@ -1,6 +1,7 @@
 
 #include "Precomp.h"
 #include "UGC.h"
+#include <cstdlib>
 #include "Engine.h"
 #include "Render/RenderSubsystem.h"
 #include "Packages/Engine/UCanvas.h"
@@ -155,7 +156,7 @@ void UGC::DrawTextBlock(float DestX, float DestY, float destWidth, float destHei
 			}
 		}
 		if (lineHeight < 1.0f && font)
-			lineHeight = (float)font->GetPageGlyph(' ').VSize;
+			lineHeight = (float)font->GetPageGlyph(' ').VSize * textScale;
 		DestY += lineHeight + textVSpacing();
 		state = lineState;
 	}
@@ -209,7 +210,7 @@ void UGC::DrawTextClipped(float ClipX, float ClipY, float clipWidth, float clipH
 			}
 		}
 		if (lineHeight < 1.0f && font)
-			lineHeight = (float)font->GetPageGlyph(' ').VSize;
+			lineHeight = (float)font->GetPageGlyph(' ').VSize * textScale;
 		lineY += lineHeight + textVSpacing();
 		state = lineState;
 	}
@@ -407,7 +408,12 @@ uint32_t UGC::EffectivePolyFlags()
 
 uint32_t UGC::EffectiveTextPolyFlags()
 {
-	uint32_t polyflags = textPolyFlags() | PF_NoSmooth;
+	uint32_t polyflags = textPolyFlags();
+	// A fractional scale can drop one-pixel strokes with nearest sampling.
+	if (UWindow::GetVirtualScale() < 1.0f)
+		polyflags &= ~PF_NoSmooth;
+	else
+		polyflags |= PF_NoSmooth;
 	if (bTextTranslucent())
 		polyflags |= PF_Translucent;
 	else
@@ -494,9 +500,9 @@ float UGC::GetFontHeight(std::optional<bool> bIncludeSpace)
 {
 	float height = 0.0f;
 	if (normalFont())
-		height = std::max(height, (float)normalFont()->GetPageGlyph(' ').VSize);
+		height = std::max(height, (float)normalFont()->GetPageGlyph(' ').VSize * textScale);
 	if (boldFont())
-		height = std::max(height, (float)boldFont()->GetPageGlyph(' ').VSize);
+		height = std::max(height, (float)boldFont()->GetPageGlyph(' ').VSize * textScale);
 	if (bIncludeSpace.value_or(false))
 		height += textVSpacing();
 	return height;
@@ -554,10 +560,10 @@ void UGC::GetTextExtent(float destWidth, float& xExtent, float& yExtent, const S
 				bold = state.bold;
 			}
 			if (ch != '\n' && font)
-				lineHeight = std::max(lineHeight, (float)font->GetPageGlyph(ch).VSize);
+				lineHeight = std::max(lineHeight, (float)font->GetPageGlyph(ch).VSize * textScale);
 		}
 		if (lineHeight < 1.0f && font)
-			lineHeight = (float)font->GetPageGlyph(' ').VSize;
+			lineHeight = (float)font->GetPageGlyph(' ').VSize * textScale;
 		width = std::max(width, lineWidth);
 		height += lineHeight + textVSpacing();
 		lineHeight = 0.0f;
@@ -998,7 +1004,7 @@ bool UGC::ParseLine(const char16_t* text, TextState state, const char16_t* end, 
 			font = state.bold ? boldFont() : normalFont();
 		if (font)
 		{
-			float newWidth = (float)font->GetPageGlyph(ch).USize + lineWidth;
+			float newWidth = (float)font->GetPageGlyph(ch).USize * textScale + lineWidth;
 			if (newWidth > wrap && !firstChar)
 			{
 				if (!spaceStart)
@@ -1070,15 +1076,24 @@ void UGC::DrawChar(UFont* font, char16_t ch, const Color& color, bool accel, flo
 	FontGlyph glyph = font->GetPageGlyph(ch);
 	float px = x + offsetX;
 	float py = y + offsetY;
-	outX = x + (float)glyph.USize;
-	outHeight = (float)glyph.VSize;
+	const float width = glyph.USize * textScale;
+	outX = x + width;
+	outHeight = glyph.VSize * textScale;
 
 	// Cut one for one as a tile is along an axis it tiles
 	uint32_t polyflags = EffectiveTextPolyFlags();
-	if (!glyph.Texture || !DrawUnitTile(glyph.Texture, px, py, (float)glyph.USize, (float)glyph.VSize, (float)glyph.StartU, (float)glyph.StartV, 0.0f, 0.0f, true, true, color, polyflags))
+	const bool originalSize = textScale == 1.0f;
+	if (!glyph.Texture)
+		return;
+	if (!originalSize)
+		DrawUnitTile(glyph.Texture, px + 1.0f, py + 1.0f, width, outHeight,
+			glyph.StartU, glyph.StartV, glyph.USize, glyph.VSize, false, false,
+			Color{0, 0, 0, 255}, PF_Masked | PF_NoSmooth);
+	if (!DrawUnitTile(glyph.Texture, px, py, width, outHeight, glyph.StartU, glyph.StartV,
+		glyph.USize, glyph.VSize, originalSize, originalSize, color, polyflags))
 		return;
 	if (accel && underlineTexture() && underlineHeight() > 0.0f)
-		DrawUnitTile(underlineTexture(), px, (float)glyph.VSize - baselineOffset() + py, (float)(glyph.USize - 1), underlineHeight(), 0.0f, 0.0f, 0.0f, 0.0f, true, true, color, polyflags);
+		DrawUnitTile(underlineTexture(), px, outHeight - baselineOffset() + py, width - 1.0f, underlineHeight(), 0.0f, 0.0f, 0.0f, 0.0f, true, true, color, polyflags);
 }
 
 // A tile as the original's XGC::DrawTile draws one (Extension.dll
@@ -1171,9 +1186,36 @@ void UGC::PopClip()
 	clipStack.pop_back();
 }
 
+void UGC::SetWindowTextScale(UWindow* window)
+{
+	textScale = 1.0f;
+	static const bool handheld = std::getenv("DXE_R36S_GAMEPAD") != nullptr;
+	if (!handheld)
+		return;
+	for (UWindow* parent = window; parent; parent = parent->parentOwner())
+	{
+		const auto name = UObject::GetUClassName(parent);
+		if (name == "ConWindowActive" || name == "ConWindowSpeech" ||
+			name == "ConChoiceWindow" || name == "HUDLogDisplay" ||
+			name == "HUDMissionStartTextDisplay")
+		{
+			textScale = 1.5f;
+			return;
+		}
+		if (name == "MenuUIHelpWindow" || name == "MenuUIMessageBoxWindow" ||
+			name == "PersonaGoalTextWindow" || name == "PersonaInventoryInfoWindow" ||
+			name == "PersonaScreenLogs")
+		{
+			textScale = 1.25f;
+			return;
+		}
+	}
+}
+
 UGC::TextSettings UGC::UseTextSettings(UWindow* window)
 {
-	TextSettings saved = { normalFont(), boldFont(), SpecialTextEnabled, textVSpacing() };
+	TextSettings saved = { normalFont(), boldFont(), SpecialTextEnabled, textVSpacing(), textScale };
+	SetWindowTextScale(window);
 	normalFont() = window->normalFont();
 	boldFont() = window->boldFont();
 	SpecialTextEnabled = window->bSpecialText();
@@ -1187,6 +1229,7 @@ void UGC::RestoreTextSettings(const TextSettings& settings)
 	boldFont() = settings.boldFont;
 	SpecialTextEnabled = settings.specialText;
 	textVSpacing() = settings.vspacing;
+	textScale = settings.scale;
 }
 
 UGC::State UGC::SaveState()
@@ -1200,7 +1243,7 @@ UGC::State UGC::SaveState()
 	s.baselineOffset = baselineOffset(); s.textVSpacing = textVSpacing(); s.underlineHeight = underlineHeight();
 	s.normalFont = normalFont(); s.boldFont = boldFont(); s.underlineTexture = underlineTexture();
 	s.clipRect = gcClipRect(); s.gcFree = gcFree(); s.gcOwner = gcOwner(); s.gcStack = gcStack();
-	s.offsetX = offsetX; s.offsetY = offsetY;
+	s.offsetX = offsetX; s.offsetY = offsetY; s.textScale = textScale;
 	return s;
 }
 
@@ -1214,5 +1257,5 @@ void UGC::RestoreState(const State& s)
 	baselineOffset() = s.baselineOffset; textVSpacing() = s.textVSpacing; underlineHeight() = s.underlineHeight;
 	normalFont() = s.normalFont; boldFont() = s.boldFont; underlineTexture() = s.underlineTexture;
 	gcClipRect() = s.clipRect; gcFree() = s.gcFree; gcOwner() = s.gcOwner; gcStack() = s.gcStack;
-	offsetX = s.offsetX; offsetY = s.offsetY;
+	offsetX = s.offsetX; offsetY = s.offsetY; textScale = s.textScale;
 }

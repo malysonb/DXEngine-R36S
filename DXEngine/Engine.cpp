@@ -1,6 +1,7 @@
 
 #include "Precomp.h"
 #include "Engine.h"
+#include "LauncherSettings.h"
 #include "Timeline.h"
 #include "Utils/File.h"
 #include "Utils/StrTools.h"
@@ -721,6 +722,55 @@ void Engine::Run()
 		auto clientStart = std::chrono::steady_clock::now();
 		Draw(realTimeElapsed, levelElapsed, PendingLevel.get());
 		ClientStatTime = std::chrono::duration<double>(std::chrono::steady_clock::now() - clientStart).count();
+
+		static const bool logSlowFrames = std::getenv("DXE_R36S_LOG_SLOW_FRAMES") != nullptr;
+		static const double slowFrameMs = []
+		{
+			const char* value = std::getenv("DXE_R36S_LOG_SLOW_MS");
+			if (!value)
+				return 50.0;
+			char* end = nullptr;
+			double v = std::strtod(value, &end);
+			return (end != value && *end == '\0' && v >= 1.0) ? v : 50.0;
+		}();
+		if (logSlowFrames && render && GameWindowActive)
+		{
+			using Clock = std::chrono::steady_clock;
+			const auto now = Clock::now();
+			const double tickMs = std::chrono::duration<double, std::milli>(now - tickTime).count();
+			static Clock::time_point lastLog{};
+			if (tickMs >= slowFrameMs && now - lastLog >= std::chrono::milliseconds(250))
+			{
+				lastLog = now;
+				std::fprintf(stderr,
+					"R36S slow frame: tick=%.1f game=%.1f draw=%.1f visibility=%.1f mesh=%.1f lights=%.1f present=%.1f ms\n",
+					tickMs, GameStatTime * 1000.0, ClientStatTime * 1000.0,
+					render->PanelStats.Occlusion * 1000.0, render->PanelStats.Mesh * 1000.0,
+					render->PanelStats.Illum * 1000.0, render->BlitStatTime * 1000.0);
+				const auto stats = render->Device->GetFrameStats();
+				int uploads = 0;
+				double uploadTime = 0.0;
+				for (const auto& pool : stats.Pools)
+				{
+					uploads += pool.Uploads;
+					uploadTime += pool.UploadTime;
+				}
+				std::fprintf(stderr,
+					"R36S draw detail: surfaces=%.1f polygons=%.1f tiles=%.1f upload=%.1f ms uploads=%d drawCalls=%d streamFlushes=%d streamKiB=%.0f\n",
+					stats.SurfaceTime * 1000.0, stats.PolygonTime * 1000.0,
+					stats.TileTime * 1000.0, uploadTime * 1000.0, uploads, stats.Flushes,
+					stats.StreamFlushes, stats.StreamBytes / 1024.0);
+				const auto& stages = render->DrawStages;
+				std::fprintf(stderr,
+					"R36S draw stages: lock=%.1f scene=%.1f overlays=%.1f post=%.1f glBatches=%.1f ms reusedSceneStates=%d\n",
+					stages.Lock * 1000.0, stages.Scene * 1000.0, stages.Overlays * 1000.0,
+					stages.Post * 1000.0, stats.BatchTime * 1000.0, stats.ReusedSceneStates);
+				std::fprintf(stderr,
+					"R36S asset stages: lightmaps=%.1f fogmaps=%.1f textureConvert=%.1f textureDriver=%.1f ms\n",
+					stages.Lightmaps * 1000.0, stages.Fogmaps * 1000.0,
+					stats.TextureConversionTime * 1000.0, stats.TextureDriverTime * 1000.0);
+			}
+		}
 
 		// A save asked for during the draw: a console's tick
 		WritePendingSave();
@@ -6479,6 +6529,21 @@ void Engine::LoadEngineSettings()
 	// original's UWindowsClient::Init calls PostEditChange (WinDrv.dll
 	// 0x11102434; bugs.md ENG.30)
 	client->PostEditChange();
+	// The R36S profile's static lights, forced before any level builds a
+	// light map: the game's own NoDynamicLights lives in its ini, which the
+	// launcher's setting overrides both ways (r36s.ini's 1 or 0 exported as
+	// DXE_R36S_NO_DYNAMIC_LIGHTS; without the variable the game's stands).
+	if (const char* value = std::getenv("DXE_R36S_NO_DYNAMIC_LIGHTS"))
+		client->NoDynamicLights = std::string(value) == "1";
+	else if (LauncherSettings::Get().Performance.NoDynamicLights)
+		client->NoDynamicLights = true;
+	// The R36S profile's frozen light maps: flickers and wavers baked once,
+	// the flashlight and the other bDynamicLight ones kept. Set apart from
+	// NoDynamicLights, which the game takes as all dynamic lights off.
+	if (const char* value = std::getenv("DXE_R36S_FREEZE_ANIMATED_LIGHTS"))
+		client->FreezeAnimatedLights = std::string(value) == "1";
+	else
+		client->FreezeAnimatedLights = LauncherSettings::Get().Performance.FreezeAnimatedLights;
 	engineSettingsLoaded = true;
 }
 

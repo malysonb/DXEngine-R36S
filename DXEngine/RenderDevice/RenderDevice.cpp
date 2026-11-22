@@ -40,6 +40,16 @@ RenderDevice::RenderDevice()
 	GammaOffsetBlue = std::clamp(settings.RenderDevice.GammaOffsetBlue, -1.0f, 1.0f);
 	// Within the 2 every Vulkan device takes (maxSamplerLodBias)
 	ConfiguredLODBias = LODBias = std::clamp(settings.RenderDevice.LODBias, -2.0f, 2.0f);
+	// The R36S tuning, clamped so a bad Settings.json cannot ask for a shader
+	// loop beyond the three bands D3DDrv has, or buffers the device cannot hold
+	DetailBandCount = std::clamp(settings.Performance.DetailBands, 0, 3);
+	TrilinearFiltering = settings.Performance.Trilinear;
+	SceneAnisotropy = std::clamp(settings.Performance.Anisotropy, 0, 16);
+	MacroTwoPassOn = settings.Performance.MacroTwoPass;
+	SceneRGBA8 = settings.Performance.SceneRGBA8;
+	StreamVertexCapacity = std::clamp(settings.Performance.StreamVertices, 4096, 1048576);
+	StreamIndexCapacity = std::clamp(settings.Performance.StreamIndices, 8192, 4194304);
+	StreamOrphanUploads = settings.Performance.StreamOrphan;
 }
 
 // D3DDrv's DrawTile (D3DDrv.dll 0x10005ba0), which every tile goes through,

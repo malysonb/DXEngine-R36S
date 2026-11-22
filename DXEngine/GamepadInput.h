@@ -68,12 +68,20 @@ private:
 	bool configured = false;
 	bool enabled = true;
 	bool uiLast = false;
+	bool handheld = false;
+	bool shortcutActive = false;
+	bool exitChordDown = false;
+	bool suppressStart = false;
+	bool suppressMenuButton = false;
+	bool menuChordDown = false;
+	float exitWindow = 0.0f;
 
 	bool dxcMode = false;
 	DXControllerPad dxc;
 
 	bool wasDown[NumButtons] = {};
 	Owner owner[NumButtons] = {};
+	EInputKey pressedKey[NumButtons] = {};
 
 	// Held d-pad and shoulder buttons repeat in menus, like a held key.
 	int repeatButton = -1;

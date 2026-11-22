@@ -3,6 +3,7 @@
 #include "GLUploadManager.h"
 #include "GLRenderDevice.h"
 #include "GLCachedTexture.h"
+#include "Utils/StatClock.h"
 
 GLUploadManager::GLUploadManager(GLRenderDevice* renderer) : renderer(renderer)
 {
@@ -29,7 +30,7 @@ bool GLUploadManager::SupportsTextureFormat(TextureFormat Format) const
 // pad), a white texel, as the Vulkan and D3D11 devices have it. A compressed
 // format's levels are made by their uploads (glCompressedTexImage2D), as ES
 // takes no compressed format in glTexImage2D.
-void GLUploadManager::UploadTexture(GLCachedTexture* tex, const TextureInfo& Info, bool masked)
+void GLUploadManager::UploadTexture(GLCachedTexture* tex, const TextureInfo& Info, bool masked, bool storageOnly)
 {
 	bool hasMips = Info.NumMips >= 1 && Info.Mips;
 	int width = hasMips ? Info.Mips[0].Width : 0;
@@ -67,6 +68,7 @@ void GLUploadManager::UploadTexture(GLCachedTexture* tex, const TextureInfo& Inf
 
 	if (!tex->Texture)
 	{
+		StatClock clock(DriverTime, renderer->TimeDraws);
 		tex->Texture = std::make_shared<GLTexture2D>();
 		glBindTexture(GL_TEXTURE_2D, tex->Texture->Handle);
 		if (!compressed)
@@ -81,9 +83,37 @@ void GLUploadManager::UploadTexture(GLCachedTexture* tex, const TextureInfo& Inf
 			}
 		}
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, std::max(mipcount - 1, 0));
-		// Once a texture made, not once a level or an upload: each ask makes a
-		// threaded driver finish its queue (GLRenderDevice.h, TakeGLErrors)
-		renderer->LogFrameGLErrors("UploadTexture failed");
+		// Querying errors can drain a threaded GLES driver's command queue.
+		// Unlock already checks drawing errors after submitting the frame.
+		if (!renderer->IsGLES || !renderer->IsLocked)
+			renderer->LogFrameGLErrors("UploadTexture failed");
+	}
+
+	// An atlas page's texture made, its data left to the rectangle uploads
+	// that each map's first draw makes (TextureInfo::AtlasPage): the page
+	// holds maps not drawn yet, and sending its whole 1024x1024 RGBA32F mip
+	// here was the hitch on entering a new area.
+	if (storageOnly)
+	{
+		if (uploader)
+		{
+			// The page's areas not written yet were zeros in the old whole
+			// upload; clear the fresh storage so anything sampled outside a
+			// map reads black as it did, not whatever the driver left there.
+			// Core in ES 3.2; skipped where the loader found none.
+			if (glClearTexImage)
+			{
+				GLuint zero = 0;
+				glClearTexImage(tex->Texture->Handle, 0, GL_RGBA, GL_UNSIGNED_BYTE, &zero);
+			}
+		}
+		else
+		{
+			UploadWhite(tex->Texture.get());
+		}
+		renderer->ForgetBoundTexture();
+		renderer->Stats.Uploads++;
+		return;
 	}
 
 	if (uploader)
@@ -105,8 +135,10 @@ void GLUploadManager::UploadTextureRect(GLCachedTexture* tex, const TextureInfo&
 	pixelsSize = (pixelsSize + 15) / 16 * 16; // memory alignment
 
 	uint8_t* data = GetUploadBuffer(pixelsSize);
+	StatClock clock(ConversionTime, renderer->TimeDraws);
 	uploader->UploadRect(data, &Info.Mips[0], x, y, w, h, Info.Palette, masked);
 
+	clock.Next(DriverTime);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1); // the rows packed tight
 	glBindTexture(GL_TEXTURE_2D, tex->Texture->Handle);
 	glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, uploader->GetFormat(), uploader->GetType(), data);
@@ -131,6 +163,7 @@ void GLUploadManager::UploadData(GLTexture2D* image, const TextureInfo& Info, bo
 		UnrealMipmap* Mip = &Info.Mips[level];
 		bool fits = !Mip->Data.empty() && Mip->Width == levelwidth && Mip->Height == levelheight &&
 			Mip->Data.size() >= RenderDevice::MipBytes(Info.Format, Mip->Width, Mip->Height);
+		StatClock clock(ConversionTime, renderer->TimeDraws);
 		if (compressed)
 		{
 			size_t mipsize = uploader->GetUploadSize(0, 0, levelwidth, levelheight);
@@ -139,6 +172,7 @@ void GLUploadManager::UploadData(GLTexture2D* image, const TextureInfo& Info, bo
 				uploader->UploadRect(data, Mip, 0, 0, levelwidth, levelheight, Info.Palette, masked);
 			else
 				memset(data, 0, mipsize);
+			clock.Next(DriverTime);
 			glCompressedTexImage2D(GL_TEXTURE_2D, level, uploader->GetInternalformat(), levelwidth, levelheight, 0, (GLsizei)mipsize, data);
 		}
 		else
@@ -152,6 +186,7 @@ void GLUploadManager::UploadData(GLTexture2D* image, const TextureInfo& Info, bo
 				uploader->UploadRect(data, Mip, 0, 0, levelwidth, levelheight, Info.Palette, masked);
 			else
 				memset(data, 0, size);
+			clock.Next(DriverTime);
 			glTexSubImage2D(GL_TEXTURE_2D, level, 0, 0, levelwidth, levelheight, uploader->GetFormat(), uploader->GetType(), data);
 		}
 		levelwidth = std::max(levelwidth >> 1, 1);
@@ -161,6 +196,7 @@ void GLUploadManager::UploadData(GLTexture2D* image, const TextureInfo& Info, bo
 
 void GLUploadManager::UploadWhite(GLTexture2D* image)
 {
+	StatClock clock(DriverTime, renderer->TimeDraws);
 	auto data = (uint32_t*)GetUploadBuffer(sizeof(uint32_t));
 	data[0] = 0xffffffff;
 	glBindTexture(GL_TEXTURE_2D, image->Handle);

@@ -186,8 +186,8 @@ public:
 		ScenePipelineState LinePipeline[2];
 	} ScenePass;
 
-	static const int SceneVertexBufferSize = 16 * 1024;
-	static const int SceneIndexBufferSize = 32 * 1024;
+	int SceneVertexBufferSize = 16 * 1024;
+	int SceneIndexBufferSize = 32 * 1024;
 
 	struct DrawBatchEntry
 	{
@@ -293,6 +293,13 @@ public:
 	FrameDrawStats GetFrameStats() const override;
 
 private:
+	friend class GLTextureManager;
+	friend class GLUploadManager;
+	double BatchTime = 0.0;
+	int ReusedSceneStates = 0;
+	int StreamFlushes = 0;
+	size_t StreamBytes = 0;
+	bool SceneConstantsValid = false;
 	struct ComplexSurfaceInfo
 	{
 		SurfaceFacet* facet;
@@ -419,6 +426,7 @@ private:
 	float RFY2 = 0.0f;
 	GLScenePushConstants SceneConstants = {};
 	GLViewport SceneViewport = {};
+	GLViewport AppliedViewport = {};
 
 	bool IsLocked = false;
 	std::set<std::string> LoggedGLErrors; // LogFrameGLErrors' lines, each said once

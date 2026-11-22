@@ -160,7 +160,7 @@ void RenderSubsystem::ResetWindowGC(UWindow* window, float offsetX, float offset
 	engine->dxgc->gcStack() = nullptr;
 	// The root's multipliers, as the original's GC is given them
 	// (XGC::SetMultipliers from XRootWindow::PaintWindows)
-	engine->dxgc->hMultiplier() = (int)UWindow::GetVirtualScale();
+	engine->dxgc->hMultiplier() = std::max(1, (int)UWindow::GetVirtualScale());
 	engine->dxgc->normalFont() = nullptr;
 	//engine->dxgc->textPlane() = {}
 	engine->dxgc->textPolyFlags() = 0;
@@ -169,8 +169,10 @@ void RenderSubsystem::ResetWindowGC(UWindow* window, float offsetX, float offset
 	//engine->dxgc->tilePlane() = {};
 	engine->dxgc->underlineHeight() = 0.0f;
 	engine->dxgc->underlineTexture() = engine->dxgc->DefaultUnderlineTexture;
-	engine->dxgc->vMultiplier() = (int)UWindow::GetVirtualScale();
+	engine->dxgc->vMultiplier() = std::max(1, (int)UWindow::GetVirtualScale());
 	engine->dxgc->SpecialTextEnabled = false;
+
+	engine->dxgc->SetWindowTextScale(window);
 
 	// Copy state from window
 	engine->dxgc->EnableSpecialText(window->bSpecialText());

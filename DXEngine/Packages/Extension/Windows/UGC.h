@@ -142,7 +142,9 @@ public:
 		UFont* boldFont = nullptr;
 		bool specialText = false;
 		float vspacing = 0.0f;
+		float scale = 1.0f;
 	};
+	void SetWindowTextScale(UWindow* window);
 	TextSettings UseTextSettings(UWindow* window);
 	void RestoreTextSettings(const TextSettings& settings);
 
@@ -164,11 +166,12 @@ public:
 		UGC* gcFree;
 		UGC* gcOwner;
 		UGC* gcStack;
-		float offsetX, offsetY;
+		float offsetX, offsetY, textScale;
 	};
 	State SaveState();
 	void RestoreState(const State& state);
 
+	float textScale = 1.0f;
 	float offsetX = 0.0f;
 	float offsetY = 0.0f;
 	Rectf clipBox;

@@ -28,6 +28,14 @@ public:
 	bool ScreenFlashes = true;
 	bool Decals = true;
 	bool NoDynamicLights = false;
+	// The R36S profile's stilled light maps: an animating light -- a
+	// flicker, a pulse, a waver -- counts as static and is baked once,
+	// while a bDynamicLight one (the flashlight, a muzzle flash, an
+	// explosion) still lights its surfaces every frame. NoDynamicLights,
+	// the game's own, leaves those out too, which is why it turns the
+	// flashlight off.
+	bool FreezeAnimatedLights = false;
+	bool FreezesAnimatedLights() const { return NoDynamicLights || FreezeAnimatedLights; }
 	// No light maps and every mesh unlit, as the original's client's
 	// NoLighting (RenderSubsystem::SceneLit); off by default
 	bool NoLighting = false;

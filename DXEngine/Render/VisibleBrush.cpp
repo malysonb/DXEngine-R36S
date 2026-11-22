@@ -214,10 +214,14 @@ bool VisibleBrush::DrawBrushPoly(VisibleFrame* frame, UModel* model, const Poly&
 		if ((PolyFlags & PF_Unlit) == 0 && !seal && engine->render->SceneLit)
 		{
 			StatClock clock(engine->render->PanelStats.Illum);
+			StatClock mapClock(engine->render->DrawStages.Lightmaps, frame->Device->TimeDraws);
 			lightmap = engine->Level->Light.GetMoverLightmap(mover, poly, zone, model);
 			// Deus Ex's only as VisibleNode's makes one
 			if (frame->VolumetricFog && (PolyFlags & PF_Translucent) == 0)
+			{
+				mapClock.Next(engine->render->DrawStages.Fogmaps);
 				fogmap = engine->Level->Light.GetMoverFogmap(mover, poly, zone, model);
+			}
 		}
 		surfaceinfo.LightMap = lightmap.NumMips != 0 ? &lightmap : nullptr;
 		surfaceinfo.FogMap = fogmap.NumMips != 0 ? &fogmap : nullptr;

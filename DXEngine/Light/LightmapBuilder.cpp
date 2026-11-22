@@ -92,11 +92,12 @@ void LightmapBuilder::AddStaticLights(UModel* model, int lightMap, bool staticOn
 			{
 				// An animating light is added over the kept static map
 				// each frame instead (AddLights), unless the
-				// client's NoDynamicLights stills it into the map here;
-				// a bDynamicLight one is a moving light, there or nowhere;
-				// an LE_OmniBumpMap one is no map's (LightSystem::GetLightmap)
+				// client's NoDynamicLights or FreezeAnimatedLights stills
+				// it into the map here; a bDynamicLight one is a moving
+				// light, there or nowhere; an LE_OmniBumpMap one is no
+				// map's (LightSystem::GetLightmap)
 				if (light->bDynamicLight() || light->LightEffect() == LE_OmniBumpMap ||
-					((LightAnimates(light) || (staticOnly && !light->bStatic())) && !engine->client->NoDynamicLights))
+					((LightAnimates(light) || (staticOnly && !light->bStatic())) && !engine->client->FreezesAnimatedLights()))
 					continue;
 				spans.clear();
 				LightmapRect lightRect = FindLitSpans(light, spans);
