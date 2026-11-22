@@ -78,6 +78,31 @@ public:
 		bool DXController = false;
 	} Gamepad;
 
+	// The handheld's interface: text larger than the original's on the
+	// 640x480 screen, and the pad's on-screen keyboard for the game's edit
+	// fields. Every scale is 1.0 (the original's) off the handheld.
+	struct
+	{
+		// Conversation speech and replies, and the first-person conversation.
+		float DialogTextScale = 1.0f;
+		// The HUD's log and mission start text.
+		float HUDTextScale = 1.0f;
+		// Terminal, persona, goal, log, message and HUD bark text.
+		float MenuTextScale = 1.0f;
+		// Menu buttons, as opposed to their labels and content: kept at the
+		// original's size until a screen is checked for overflow.
+		float MenuControlTextScale = 1.0f;
+		// The on-screen keyboard for UEditWindows; only the handheld shows
+		// one. AutoShow opens it as an edit field takes the focus.
+		bool VirtualKeyboard = false;
+		bool KeyboardAutoShow = true;
+		// A small "SELECT: teclado" hint while a field waits for the
+		// keyboard to be opened again.
+		bool ShowButtonHints = false;
+		// Log the focused window's class and place when the focus changes.
+		bool LogUI = false;
+	} Interface;
+
 	// Speed for slow hardware.
 	struct
 	{

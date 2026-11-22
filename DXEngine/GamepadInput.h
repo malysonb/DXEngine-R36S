@@ -16,9 +16,14 @@ struct GamepadState;
 //    the sticks and triggers are the JoyX/Y/U/V/Z/R axes, so what they do is
 //    whatever User.ini binds them to -- the same table as the keyboard.
 //  - While Deus Ex's interface is up (a modal window: the main menu, the
-//    inventory, a conversation, a keypad), the sticks move the pointer, A and
-//    X click, B, Y, SELECT and START are Escape (so the button that opened a
-//    screen closes it), the d-pad is the arrow keys and L1/R1 scroll.
+//    inventory, a conversation, a keypad), A sends Enter to the focused
+//    control, the sticks move the pointer, R2 clicks with it, X is the right
+//    click, the d-pad is the arrow keys and the list rows, L1/R1 walk the tab
+//    groups, and B, Y, SELECT and START are Escape (so the button that opened
+//    a screen closes it). Holding L2 turns the d-pad into the wheel.
+//
+//  - A text field (UEditWindow) opens the on-screen keyboard: the keyboard
+//    takes the pad while it shows (VirtualKeyboard).
 //
 // Button numbering follows the XInput order UE1 ports use: A=Joy1, B=Joy2,
 // X=Joy3, Y=Joy4, L1=Joy5, R1=Joy6, SELECT=Joy7, START=Joy8, L3=Joy9,
@@ -53,7 +58,7 @@ public:
 	DXControllerPad& DXController() { return dxc; }
 
 private:
-	enum class Owner : uint8_t { None, Game, UI };
+	enum class Owner : uint8_t { None, Game, UI, Keyboard };
 	enum { NumButtons = 15 + 2 };   // SDL's buttons, then the two triggers
 
 	void Configure();
@@ -74,6 +79,9 @@ private:
 	bool suppressStart = false;
 	bool suppressMenuButton = false;
 	bool menuChordDown = false;
+	// L2 held in the interface: the d-pad sends the wheel, for text that is
+	// not a list (a terminal's body, a note).
+	bool scrollModifier = false;
 	float exitWindow = 0.0f;
 
 	bool dxcMode = false;

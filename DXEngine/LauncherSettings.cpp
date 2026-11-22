@@ -100,7 +100,17 @@ LauncherSettings::LauncherSettings()
 	const bool handheld = std::getenv("DXE_R36S_GAMEPAD") != nullptr;
 	Gamepad.InvertY = handheld;
 	if (handheld)
+	{
 		Gamepad.CursorSpeed = 0.45f;
+		// The R36S profile: the content the game draws small is enlarged;
+		// controls keep the original's size until each screen is checked.
+		Interface.DialogTextScale = 1.5f;
+		Interface.HUDTextScale = 1.5f;
+		Interface.MenuTextScale = 1.25f;
+		Interface.VirtualKeyboard = true;
+		Interface.KeyboardAutoShow = true;
+		Interface.ShowButtonHints = true;
+	}
 	try
 	{
 		JsonValue settings = JsonValue::parse(File::read_all_text(GetSettingsFilename()));
@@ -186,6 +196,20 @@ LauncherSettings::LauncherSettings()
 		ReadInt(perf, "Performance", "StreamVertices", Performance.StreamVertices);
 		ReadInt(perf, "Performance", "StreamIndices", Performance.StreamIndices);
 		ReadBool(perf, "Performance", "StreamOrphan", Performance.StreamOrphan);
+
+		const JsonValue& ui = settings["Interface"];
+		ReadFloat(ui, "Interface", "DialogTextScale", Interface.DialogTextScale);
+		ReadFloat(ui, "Interface", "HUDTextScale", Interface.HUDTextScale);
+		ReadFloat(ui, "Interface", "MenuTextScale", Interface.MenuTextScale);
+		ReadFloat(ui, "Interface", "MenuControlTextScale", Interface.MenuControlTextScale);
+		ReadBool(ui, "Interface", "VirtualKeyboard", Interface.VirtualKeyboard);
+		ReadBool(ui, "Interface", "KeyboardAutoShow", Interface.KeyboardAutoShow);
+		ReadBool(ui, "Interface", "ShowButtonHints", Interface.ShowButtonHints);
+		ReadBool(ui, "Interface", "LogUI", Interface.LogUI);
+		Interface.DialogTextScale = std::clamp(Interface.DialogTextScale, 1.0f, 2.0f);
+		Interface.HUDTextScale = std::clamp(Interface.HUDTextScale, 1.0f, 2.0f);
+		Interface.MenuTextScale = std::clamp(Interface.MenuTextScale, 1.0f, 2.0f);
+		Interface.MenuControlTextScale = std::clamp(Interface.MenuControlTextScale, 1.0f, 1.5f);
 	}
 	catch (const std::exception& e)
 	{
@@ -229,5 +253,20 @@ LauncherSettings::LauncherSettings()
 		ApplyEnvInt("DXE_R36S_STREAM_VERTICES", Performance.StreamVertices, 4096, 1048576);
 		ApplyEnvInt("DXE_R36S_STREAM_INDICES", Performance.StreamIndices, 8192, 4194304);
 		ApplyEnvBool("DXE_R36S_STREAM_ORPHAN", Performance.StreamOrphan);
+		ApplyEnvFloat("DXE_R36S_DIALOG_SCALE", Interface.DialogTextScale, 1.0f, 2.0f);
+		ApplyEnvFloat("DXE_R36S_HUD_SCALE", Interface.HUDTextScale, 1.0f, 2.0f);
+		ApplyEnvFloat("DXE_R36S_MENU_SCALE", Interface.MenuTextScale, 1.0f, 2.0f);
+		ApplyEnvFloat("DXE_R36S_MENU_CONTROL_SCALE", Interface.MenuControlTextScale, 1.0f, 1.5f);
+		ApplyEnvBool("DXE_R36S_VIRTUAL_KEYBOARD", Interface.VirtualKeyboard);
+		ApplyEnvBool("DXE_R36S_KEYBOARD_AUTO_SHOW", Interface.KeyboardAutoShow);
+		ApplyEnvBool("DXE_R36S_BUTTON_HINTS", Interface.ShowButtonHints);
+		ApplyEnvBool("DXE_R36S_LOG_UI", Interface.LogUI);
+		LogMessage("R36S interface: dialog=" + std::to_string(Interface.DialogTextScale)
+			+ " hud=" + std::to_string(Interface.HUDTextScale)
+			+ " menu=" + std::to_string(Interface.MenuTextScale)
+			+ " controls=" + std::to_string(Interface.MenuControlTextScale)
+			+ " keyboard=" + (Interface.VirtualKeyboard ? "1" : "0")
+			+ " auto-show=" + (Interface.KeyboardAutoShow ? "1" : "0")
+			+ " hints=" + (Interface.ShowButtonHints ? "1" : "0"));
 	}
 }

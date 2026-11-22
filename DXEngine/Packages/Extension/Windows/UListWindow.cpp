@@ -1336,13 +1336,29 @@ int UListWindow::FindRowByKey(char key)
 	return -1;
 }
 
-// Enter activates the focus row; the arrows and Escape clear the hot keys
-// typed.
+// Enter activates the focus row; the arrows clear the hot keys typed and,
+// with the list itself holding the focus, up and down walk its rows -- the
+// pad's d-pad has no other way to reach them, as the original's mouse click
+// did. A row moved to is selected and scrolled into view (MoveToRow).
 bool UListWindow::VirtualKeyPressed(EInputKey key, bool bRepeat)
 {
 	bool handled = UWindow::VirtualKeyPressed(key, bRepeat);
 	if (key == IK_Left || key == IK_Right || key == IK_Up || key == IK_Down || key == IK_Escape)
 		ClearHotKeyString();
+	if (!handled && IsFocusWindow() && (key == IK_Up || key == IK_Down))
+	{
+		int rows = GetNumRows();
+		if (rows > 0)
+		{
+			int index = focusLine();
+			if (index < 0 || index >= rows)
+				index = key == IK_Up ? rows - 1 : 0;
+			else
+				index = std::clamp(index + (key == IK_Up ? -1 : 1), 0, rows - 1);
+			MoveToRow(index, true, true, false, false, true);
+			return true;
+		}
+	}
 	if (key == IK_Enter)
 	{
 		ActivateRow();

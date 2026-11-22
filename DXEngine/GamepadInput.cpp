@@ -3,8 +3,10 @@
 #include "Engine.h"
 #include "LauncherSettings.h"
 #include "OriginalCommandLine.h"
+#include "VirtualKeyboard.h"
 #include "Utils/Logger.h"
 #include "Packages/Extension/Windows/TabGroup/URootWindow.h"
+#include "Packages/Extension/Windows/Text/UButtonWindow.h"
 #include <dxwidgets/window/window.h>
 #include <algorithm>
 #include <cmath>
@@ -170,6 +172,29 @@ namespace
 		engine->dxRootWindow->SetRootFocusWindow(choices[index]);
 	}
 
+	// The keypad's window follows the pointer in the original and seeds no
+	// focus, so A had nothing to press until a d-pad move found a button.
+	// Seed its first button, and the overlay draws the focus box the
+	// button's own textures lack.
+	void EnsureKeypadFocus(Engine* engine)
+	{
+		if (!engine->dxRootWindow)
+			return;
+		UWindow* modal = engine->dxRootWindow->TopmostModal();
+		if (!modal || UObject::GetUClassName(modal) != "HUDKeypadWindow")
+			return;
+		if (engine->dxRootWindow->FocusWindow())
+			return;
+		for (UWindow* child = modal->firstChild(); child; child = child->nextSibling())
+		{
+			if (child->bIsSelectable() && child->IsTraversable(true))
+			{
+				engine->dxRootWindow->SetRootFocusWindow(child);
+				return;
+			}
+		}
+	}
+
 	// The first reply takes the focus as soon as the list appears, as the
 	// original's choices light up: B then presses it without the d-pad
 	// having to be touched. A pointer click still acts on what it is over.
@@ -246,9 +271,36 @@ void GamepadInput::Press(Engine* engine, int button, bool ui)
 		return;
 	}
 
+	VirtualKeyboard& keyboard = VirtualKeyboard::Get();
 	owner[button] = Owner::UI;
 	uiKey[button] = IK_None;
 	const Point pos(0.0, 0.0);   // the root window clicks at its own pointer
+
+	// SELECT opens the keyboard on a text field, where it is otherwise
+	// hidden; with no field it keeps its usual Escape.
+	if (button == (int)GamepadButton::Back && keyboard.CanOpen())
+	{
+		keyboard.Open(engine);
+		return;
+	}
+
+	// While the keyboard is up it takes every button: its own A, B, X, Y,
+	// d-pad, shoulders, START and SELECT, and nothing behind it.
+	if (keyboard.IsOpen())
+	{
+		owner[button] = Owner::Keyboard;
+		EInputKey key = IK_None;
+		keyboard.Press(engine, button, key);
+		uiKey[button] = key;
+		if (button == (int)GamepadButton::DpadUp || button == (int)GamepadButton::DpadDown ||
+			button == (int)GamepadButton::DpadLeft || button == (int)GamepadButton::DpadRight ||
+			button == (int)GamepadButton::Y)
+		{
+			repeatButton = button;
+			repeatWait = RepeatDelay;
+		}
+		return;
+	}
 
 	// In a conversation both face buttons confirm -- the one the pointer
 	// would click (A on SDL's positional layout, the bottom button) and B
@@ -271,24 +323,82 @@ void GamepadInput::Press(Engine* engine, int button, bool ui)
 			repeatWait = RepeatDelay;
 			return;
 		}
+		// The tab-group buttons and the scroll modifier have no place in a
+		// conversation; keep them from moving its focus.
+		if (button == (int)GamepadButton::LeftShoulder || button == (int)GamepadButton::RightShoulder ||
+			button == TriggerLeft || button == TriggerRight)
+			return;
+	}
+
+	// A menu setting's action button refuses Enter so the menu can use it as
+	// OK; on the pad A is the natural "next value" there, as a click on it is.
+	if (button == (int)GamepadButton::A && engine->dxRootWindow)
+	{
+		UWindow* focus = engine->dxRootWindow->FocusWindow();
+		if (focus && focus->IsA("MenuUIChoiceButton") && focus->parentOwner())
+		{
+			UWindow* choice = focus->parentOwner();
+			if (choice->IsA("MenuUIChoiceSlider") || choice->IsA("MenuUIChoiceEnum"))
+			{
+				uiKey[button] = IK_Right;
+				engine->OnWindowKeyDown(IK_Right);
+				return;
+			}
+		}
+	}
+
+	// An inventory item's own button refuses the keyboard (its
+	// VirtualKeyPressed returns false, so the mouse click is what selects
+	// it); press it here, and the screen's own Enter uses the selection.
+	if (button == (int)GamepadButton::A && engine->dxRootWindow)
+	{
+		UWindow* focus = engine->dxRootWindow->FocusWindow();
+		if (focus && focus->IsA("PersonaItemButton"))
+		{
+			if (UButtonWindow* item = UObject::TryCast<UButtonWindow>(focus))
+			{
+				item->PressButton(IK_Enter);
+				return;
+			}
+		}
 	}
 
 	switch (button)
 	{
-	case (int)GamepadButton::A: engine->OnWindowMouseDown(pos, IK_LeftMouse); break;
+	// A activates what holds the focus, as Enter does: a menu's button, a
+	// list's row, an item in the inventory, a reply in a conversation.
+	case (int)GamepadButton::A: uiKey[button] = IK_Enter; engine->OnWindowKeyDown(IK_Enter); break;
+	// The pointer stays for what only a mouse can do: R2 clicks with it.
+	case TriggerRight: engine->OnWindowMouseDown(pos, IK_LeftMouse); break;
+	// L2 turns the d-pad into the wheel for long text that is not a list.
+	case TriggerLeft: scrollModifier = true; break;
+	// A right click steps a menu value back, as the game's own right click.
 	case (int)GamepadButton::X: engine->OnWindowMouseDown(pos, IK_RightMouse); break;
+	// L1 and R1 walk the tab groups: the nav bar, a list, a button bar.
+	case (int)GamepadButton::LeftShoulder:
+		if (engine->dxRootWindow)
+			engine->dxRootWindow->MoveTabGroupPrev();
+		break;
+	case (int)GamepadButton::RightShoulder:
+		if (engine->dxRootWindow)
+			engine->dxRootWindow->MoveTabGroupNext();
+		break;
 	// Back out of the menu. SELECT, Y and START also open menus in play, so
 	// the button that opened a screen closes it again.
 	case (int)GamepadButton::B:
 	case (int)GamepadButton::Y:
 	case (int)GamepadButton::Back:
 	case (int)GamepadButton::Start: uiKey[button] = IK_Escape; engine->OnWindowKeyDown(IK_Escape); break;
-	case (int)GamepadButton::DpadUp: uiKey[button] = IK_Up; engine->OnWindowKeyDown(IK_Up); break;
-	case (int)GamepadButton::DpadDown: uiKey[button] = IK_Down; engine->OnWindowKeyDown(IK_Down); break;
+	case (int)GamepadButton::DpadUp:
+		if (scrollModifier) engine->OnWindowMouseWheel(pos, IK_MouseWheelUp);
+		else { uiKey[button] = IK_Up; engine->OnWindowKeyDown(IK_Up); }
+		break;
+	case (int)GamepadButton::DpadDown:
+		if (scrollModifier) engine->OnWindowMouseWheel(pos, IK_MouseWheelDown);
+		else { uiKey[button] = IK_Down; engine->OnWindowKeyDown(IK_Down); }
+		break;
 	case (int)GamepadButton::DpadLeft: uiKey[button] = IK_Left; engine->OnWindowKeyDown(IK_Left); break;
 	case (int)GamepadButton::DpadRight: uiKey[button] = IK_Right; engine->OnWindowKeyDown(IK_Right); break;
-	case (int)GamepadButton::LeftShoulder: engine->OnWindowMouseWheel(pos, IK_MouseWheelUp); break;
-	case (int)GamepadButton::RightShoulder: engine->OnWindowMouseWheel(pos, IK_MouseWheelDown); break;
 	default: owner[button] = Owner::None; return;
 	}
 
@@ -296,7 +406,6 @@ void GamepadInput::Press(Engine* engine, int button, bool ui)
 	{
 	case (int)GamepadButton::DpadUp: case (int)GamepadButton::DpadDown:
 	case (int)GamepadButton::DpadLeft: case (int)GamepadButton::DpadRight:
-	case (int)GamepadButton::LeftShoulder: case (int)GamepadButton::RightShoulder:
 		repeatButton = button;
 		repeatWait = RepeatDelay;
 		break;
@@ -320,6 +429,17 @@ void GamepadInput::Release(Engine* engine, int button)
 		engine->OnWindowKeyUp(pressedKey[button]);
 		return;
 	}
+	if (was == Owner::Keyboard)
+	{
+		if (uiKey[button] != IK_None)
+		{
+			EInputKey key = uiKey[button];
+			uiKey[button] = IK_None;
+			engine->OnWindowKeyUp(key);
+		}
+		VirtualKeyboard::Get().Release(engine, button);
+		return;
+	}
 	if (was != Owner::UI)
 		return;
 
@@ -333,10 +453,16 @@ void GamepadInput::Release(Engine* engine, int button)
 		return;
 	}
 
+	if (button == TriggerLeft)
+	{
+		scrollModifier = false;
+		return;
+	}
+
 	const Point pos(0.0, 0.0);
 	switch (button)
 	{
-	case (int)GamepadButton::A: engine->OnWindowMouseUp(pos, IK_LeftMouse); break;
+	case TriggerRight: engine->OnWindowMouseUp(pos, IK_LeftMouse); break;
 	case (int)GamepadButton::X: engine->OnWindowMouseUp(pos, IK_RightMouse); break;
 	default: break;   // the wheel has no release
 	}
@@ -344,7 +470,10 @@ void GamepadInput::Release(Engine* engine, int button)
 
 void GamepadInput::UIRepeat(Engine* engine, float timeElapsed)
 {
-	if (repeatButton < 0 || owner[repeatButton] != Owner::UI)
+	if (repeatButton < 0)
+		return;
+	Owner side = owner[repeatButton];
+	if (side != Owner::UI && side != Owner::Keyboard)
 		return;
 	repeatWait -= timeElapsed;
 	if (repeatWait > 0.0f)
@@ -352,6 +481,13 @@ void GamepadInput::UIRepeat(Engine* engine, float timeElapsed)
 	repeatWait += RepeatRate;
 	if (repeatWait < 0.0f)
 		repeatWait = RepeatRate;   // after a long frame, one repeat, not a burst
+
+	if (side == Owner::Keyboard)
+	{
+		if (!VirtualKeyboard::Get().Repeat(engine))
+			repeatButton = -1;
+		return;
+	}
 
 	const Point pos(0.0, 0.0);
 	if (ConversationWindow(engine))
@@ -364,12 +500,16 @@ void GamepadInput::UIRepeat(Engine* engine, float timeElapsed)
 	}
 	switch (repeatButton)
 	{
-	case (int)GamepadButton::DpadUp: engine->OnWindowKeyDown(IK_Up); break;
-	case (int)GamepadButton::DpadDown: engine->OnWindowKeyDown(IK_Down); break;
+	case (int)GamepadButton::DpadUp:
+		if (scrollModifier) engine->OnWindowMouseWheel(pos, IK_MouseWheelUp);
+		else engine->OnWindowKeyDown(IK_Up);
+		break;
+	case (int)GamepadButton::DpadDown:
+		if (scrollModifier) engine->OnWindowMouseWheel(pos, IK_MouseWheelDown);
+		else engine->OnWindowKeyDown(IK_Down);
+		break;
 	case (int)GamepadButton::DpadLeft: engine->OnWindowKeyDown(IK_Left); break;
 	case (int)GamepadButton::DpadRight: engine->OnWindowKeyDown(IK_Right); break;
-	case (int)GamepadButton::LeftShoulder: engine->OnWindowMouseWheel(pos, IK_MouseWheelUp); break;
-	case (int)GamepadButton::RightShoulder: engine->OnWindowMouseWheel(pos, IK_MouseWheelDown); break;
 	default: break;
 	}
 }
@@ -472,7 +612,9 @@ void GamepadInput::Forget(Engine* engine)
 	suppressStart = false;
 	suppressMenuButton = false;
 	menuChordDown = false;
+	scrollModifier = false;
 	exitWindow = 0.0f;
+	VirtualKeyboard::Get().Forget();
 	for (bool& active : axisActive)
 		active = false;
 	pointerRemX = pointerRemY = 0.0f;
@@ -502,7 +644,11 @@ void GamepadInput::Update(Engine* engine, float timeElapsed)
 		ReleaseGameAxes(engine);   // do not keep walking under a menu
 	uiLast = ui;
 	if (ui)
+	{
 		FocusFirstChoice(engine);   // a reply list's first button takes the focus as it appears
+		EnsureKeypadFocus(engine);
+	}
+	VirtualKeyboard::Get().Update(engine, timeElapsed);
 
 	bool down[NumButtons];
 	ReadButtons(state, down);
@@ -551,7 +697,12 @@ void GamepadInput::Update(Engine* engine, float timeElapsed)
 			suppressStart = false;
 		if (suppressStart)
 			down[start] = false;
-		down[back] = down[guide] = false;
+		// The game mode keeps SELECT for its shortcuts and chords. In the
+		// interface it is a normal button: it opens a waiting keyboard or
+		// backs out, as the port's controls say.
+		if (!ui)
+			down[back] = false;
+		down[guide] = false;
 	}
 
 	for (int i = 0; i < NumButtons; i++)
@@ -566,7 +717,8 @@ void GamepadInput::Update(Engine* engine, float timeElapsed)
 	if (ui)
 	{
 		UIRepeat(engine, timeElapsed);
-		Pointer(engine, state, timeElapsed);
+		if (!VirtualKeyboard::Get().IsOpen())
+			Pointer(engine, state, timeElapsed);
 	}
 	else
 	{

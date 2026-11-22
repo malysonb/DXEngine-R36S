@@ -96,6 +96,8 @@ set(DXCOMMON_SOURCES
 	DXEngine/LauncherSettings.h
 	DXEngine/GamepadInput.cpp
 	DXEngine/GamepadInput.h
+	DXEngine/VirtualKeyboard.cpp
+	DXEngine/VirtualKeyboard.h
 	DXEngine/DXControllerPad.cpp
 	DXEngine/DXControllerPad.h
 	DXEngine/DXControllerStick.h

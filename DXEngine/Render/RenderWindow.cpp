@@ -5,6 +5,7 @@
 #include "GameWindow.h"
 #include "VM/ScriptCall.h"
 #include "Engine.h"
+#include "VirtualKeyboard.h"
 #include "Packages/Engine/UViewport.h"
 #include "Packages/Engine/UCanvas.h"
 #include "Packages/Engine/Resources/UFont.h"
@@ -39,6 +40,8 @@ void RenderSubsystem::PostRenderWindows(UCanvas* canvas)
 
 	DrawRawBackground(engine->dxRootWindow);
 	DrawWindow(engine->dxRootWindow, 0.0f, 0.0f);
+
+	VirtualKeyboard::Get().Draw(engine, engine->dxgc);
 
 	if (engine->getDXWindowDebugMode())
 	{

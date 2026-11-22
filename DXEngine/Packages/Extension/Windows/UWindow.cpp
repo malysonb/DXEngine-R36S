@@ -15,6 +15,7 @@
 #include "Audio/AudioDevice.h"
 #include "VM/ScriptCall.h"
 #include "Engine.h"
+#include "LauncherSettings.h"
 #include "Render/RenderSubsystem.h"
 #include "Package/PackageManager.h"
 #include "Packages/Core/UClass.h"
@@ -1937,8 +1938,7 @@ static int ConfigureDepth = 0;
 // (UGC::SetWindowTextScale), where every other build keeps the original's.
 static bool HasLargerConversationText()
 {
-	static const bool larger = std::getenv("DXE_R36S_GAMEPAD") != nullptr;
-	return larger;
+	return LauncherSettings::Get().Interface.DialogTextScale > 1.0f;
 }
 
 // The lower window of a conversation -- the tile the speech's lines and the
@@ -1956,7 +1956,7 @@ static void FitConversationText(UWindow* window, float width, float& y, float& h
 	if (UObject::GetUClassName(window) != "TileWindow")
 		return;
 	NameString parentClass = UObject::GetUClassName(window->parentOwner());
-	if (parentClass != "ConWindow" && parentClass != "ConWindowActive")
+	if (parentClass != "ConWindow" && parentClass != "ConWindowActive" && parentClass != "HUDConWindowFirst")
 		return;
 
 	float askedWidth = width;

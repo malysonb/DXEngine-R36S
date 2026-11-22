@@ -3,6 +3,7 @@
 #include "UGC.h"
 #include <cstdlib>
 #include "Engine.h"
+#include "LauncherSettings.h"
 #include "Render/RenderSubsystem.h"
 #include "Packages/Engine/UCanvas.h"
 #include "Packages/Engine/Resources/Level/UModel.h"
@@ -1186,27 +1187,95 @@ void UGC::PopClip()
 	clipStack.pop_back();
 }
 
+// The classes whose text the R36S profile enlarges, by kind. The walk goes
+// from the window up its parents and stops at the first name that matches,
+// so the innermost category wins: a conversation's choice under its
+// ConWindowActive is dialog text, a terminal's body under its
+// ComputerUIWindow is menu text.
+static const char* const DialogTextClasses[] =
+{
+	"ConWindow", "ConWindowActive", "ConWindowSpeech", "ConChoiceWindow",
+	// The HUD's own first-person conversation window.
+	"HUDConWindowFirst",
+};
+
+static const char* const HUDTextClasses[] =
+{
+	"HUDLogDisplay", "HUDMissionStartTextDisplay",
+};
+
+static const char* const MenuTextClasses[] =
+{
+	"ComputerUIWindow",
+	"MenuUIHelpWindow", "MenuUIMessageBoxWindow",
+	"MenuUILabelWindow", "MenuUISmallLabelWindow", "MenuUIHeaderWindow",
+	"MenuUINormalLargeTextWindow", "MenuUIStaticInfoWindow",
+	"PersonaGoalTextWindow", "PersonaInventoryInfoWindow",
+	"PersonaScreenLogs", "PersonaScreenConversations",
+	"PersonaScreenGoals", "PersonaScreenImages",
+	"PersonaSkillTextWindow", "PersonaInfoWindow",
+	"PersonaEditWindow", "PersonaNotesEditWindow", "PersonaImageNoteWindow",
+	"MenuUIEditWindow", "MenuUILoadSaveEditWindow",
+	"HUDInformationDisplay", "HUDReceivedDisplay",
+	"HUDBarkDisplay", "HUDBarkDisplayItem",
+};
+
+// Buttons keep their own scale, apart from the content around them: a
+// larger label in a fixed-size button is what clips first. Their class is
+// checked before the screen's, so a terminal's Login button follows the
+// controls' scale, not the terminal's.
+static const char* const MenuControlClasses[] =
+{
+	"MenuUIChoiceButton", "MenuUIBorderButtonWindow",
+	"MenuUIActionButtonWindow", "MenuUIMenuButtonWindow",
+	"MenuUIInfoButtonWindow",
+	"PersonaActionButtonWindow", "PersonaBorderButtonWindow",
+	"PersonaNavButtonWindow", "PersonaSkillButtonWindow",
+	"PersonaItemButton", "HUDKeypadButton",
+};
+
+static bool IsOneOf(const NameString& name, const char* const* names, size_t count)
+{
+	for (size_t i = 0; i < count; i++)
+	{
+		if (name == names[i])
+			return true;
+	}
+	return false;
+}
+
 void UGC::SetWindowTextScale(UWindow* window)
 {
 	textScale = 1.0f;
-	static const bool handheld = std::getenv("DXE_R36S_GAMEPAD") != nullptr;
-	if (!handheld)
+	const auto& interface = LauncherSettings::Get().Interface;
+	const float dialogScale = interface.DialogTextScale;
+	const float hudScale = interface.HUDTextScale;
+	const float menuScale = interface.MenuTextScale;
+	const float controlScale = interface.MenuControlTextScale;
+	if (dialogScale == 1.0f && hudScale == 1.0f && menuScale == 1.0f && controlScale == 1.0f)
 		return;
+
 	for (UWindow* parent = window; parent; parent = parent->parentOwner())
 	{
 		const auto name = UObject::GetUClassName(parent);
-		if (name == "ConWindowActive" || name == "ConWindowSpeech" ||
-			name == "ConChoiceWindow" || name == "HUDLogDisplay" ||
-			name == "HUDMissionStartTextDisplay")
+		if (IsOneOf(name, MenuControlClasses, sizeof(MenuControlClasses) / sizeof(MenuControlClasses[0])))
 		{
-			textScale = 1.5f;
+			textScale = controlScale;
 			return;
 		}
-		if (name == "MenuUIHelpWindow" || name == "MenuUIMessageBoxWindow" ||
-			name == "PersonaGoalTextWindow" || name == "PersonaInventoryInfoWindow" ||
-			name == "PersonaScreenLogs")
+		if (IsOneOf(name, DialogTextClasses, sizeof(DialogTextClasses) / sizeof(DialogTextClasses[0])))
 		{
-			textScale = 1.25f;
+			textScale = dialogScale;
+			return;
+		}
+		if (IsOneOf(name, HUDTextClasses, sizeof(HUDTextClasses) / sizeof(HUDTextClasses[0])))
+		{
+			textScale = hudScale;
+			return;
+		}
+		if (IsOneOf(name, MenuTextClasses, sizeof(MenuTextClasses) / sizeof(MenuTextClasses[0])))
+		{
+			textScale = menuScale;
 			return;
 		}
 	}

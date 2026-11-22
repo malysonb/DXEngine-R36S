@@ -62,11 +62,25 @@ The fork's work:
   `PrecacheTextures` and `PrecacheLightmaps` fill the texture and light-map caches during the
   load instead of on each area's first sight; `AtlasPartialUpload` uploads only the rectangle a
   new light map wrote, not the whole atlas page.
-- **Larger text on the small panel**: the conversation, choice, HUD log and mission-start text
-  is drawn at 1.5× (help, message boxes, goals, logs and inventory descriptions at 1.25×), with
-  measurement and drawing sharing the scale and a dark drop shadow. Since the game sizes the
-  conversation letterbox from the screen alone, the lower window grows upward to what the speech
-  and the choices ask for, so a long line or a long list of replies stays on the 640×480 screen.
+- **Larger text on the small panel**: the content text is drawn larger than the original's on
+  the 640×480 screen — conversations at 1.5×, the HUD log and mission start at 1.5×, and
+  terminal, persona, goal, log, bark and message text at 1.25× — with measurement and drawing
+  sharing the scale and a dark drop shadow. The three scales are the `Interface` block's
+  `DialogTextScale`, `HUDTextScale` and `MenuTextScale`, and the menu controls' own
+  `MenuControlTextScale` starts at 1.0 so fixed-size buttons do not clip. Since the game sizes
+  the conversation letterbox from the screen alone, the lower window grows upward to what the
+  speech and the choices ask for, so a long line or a long list of replies stays on screen.
+- **The pad on the interface**: A sends Enter to the focused control, the d-pad moves the focus
+  and walks list rows (a list that the original only clicked can now be read with the pad), L1
+  and R1 walk the tab groups, R2 clicks with the pointer for drag and drop, X is the right
+  click, and holding L2 turns the d-pad into the wheel for long text. The keypad, whose buttons
+  draw no focus mark and whose window follows the pointer in the original, gets a seeded focus
+  and a box around it.
+- **The on-screen keyboard** (`Interface.VirtualKeyboard`): a text field — a terminal's login,
+  the new game's name, a save's name, a note — opens a compact keyboard over the interface.
+  The d-pad walks it, A types, Y deletes, X shifts, L1/R1 change page, Tab moves to the next
+  field, START sends Enter, and B hides it (SELECT brings it back). Characters go through the
+  engine's own text path, so the edit window's filter, length, undo and sounds still apply.
 - **Measuring it**: `DXE_R36S_LOG_SLOW_MS` logs every frame over a threshold with its stages
   (`tick`, `game`, `draw`, `visibility`, `mesh`, `lights`, `present`), the draw and asset
   breakdown (`surfaces`, `upload`, `lightmaps`, `textureDriver`) and the streaming counters
@@ -77,10 +91,13 @@ The fork's work:
 The launcher and the `r36s.ini` profile are distributed with the port: it raises the CPU and
 GPU frequency ceilings and sets the `performance` governor for the session, restoring them on
 exit, exports the `DXE_R36S_*` variables, and passes the profile's stick dead zone through
-`DXE_R36S_DEADZONE`. In a conversation the pad's d-pad walks the replies and either face button
-presses the one highlighted, as the keyboard's arrows and Enter do. The port's
-`PERFORMANCE.md` (Portuguese) records what each performance knob measured on the device and its
-trade-offs.
+`DXE_R36S_DEADZONE` and its interface scales and keyboard switches through
+`DXE_R36S_DIALOG_SCALE`, `DXE_R36S_HUD_SCALE`, `DXE_R36S_MENU_SCALE`,
+`DXE_R36S_MENU_CONTROL_SCALE`, `DXE_R36S_VIRTUAL_KEYBOARD`, `DXE_R36S_KEYBOARD_AUTO_SHOW`,
+`DXE_R36S_BUTTON_HINTS` and `DXE_R36S_LOG_UI`. In a conversation the pad's d-pad walks the
+replies and either face button presses the one highlighted, as the keyboard's arrows and Enter
+do. The port's `PERFORMANCE.md` (Portuguese) records what each performance knob measured on the
+device and its trade-offs.
 
 The fork's changes are kept to the files it touches, so the engine can still be merged from
 DXEngine as it moves.
